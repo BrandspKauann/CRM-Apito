@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Apito de Mestre | CRM</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/auth.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <main id="login-screen" class="login-screen" hidden>
+    <section class="login-card" aria-labelledby="login-title">
+      <img class="brand-logo" src="https://apitodemestre.com.br/wp-content/uploads/2025/04/logo-OficialApito.webp" alt="Logo Apito de Mestre">
+      <p>Apito de Mestre</p>
+      <h1 id="login-title">Acesse o CRM</h1>
+      <form id="login-form">
+        <label>Usuário<input name="username" autocomplete="username" required autofocus></label>
+        <label>Senha<input name="password" type="password" autocomplete="current-password" required></label>
+        <p id="login-error" role="alert"></p>
+        <button type="submit">Entrar</button>
+      </form>
+    </section>
+  </main>
+  <div class="frame" hidden>
+    <header><span class="window-dots">● ● ●</span><span>Gestão de relacionamentos e oportunidades</span><b>CRM Apito de Mestre</b></header>
+    <div class="layout">
+      <aside>
+        <h2><img class="brand-logo" src="https://apitodemestre.com.br/wp-content/uploads/2025/04/logo-OficialApito.webp" alt="Logo Apito de Mestre"> <span>Apito de Mestre</span></h2>
+        <div class="workspace">Meu workspace</div>
+        <nav aria-label="Menu principal"></nav>
+        <small class="profile">Seu workspace<br>Apito de Mestre</small>
+      </aside>
+      <main>
+        <div class="heading"><div><p id="eyebrow"></p><h1></h1><p id="subtitle"></p></div><div class="heading-actions"><button id="logout" type="button">Sair</button><button id="create"></button></div></div>
+        <div id="alert" role="alert"></div><div id="content"></div>
+        <footer>Apito de Mestre · Entretenimento e experiências corporativas <span>Dados online</span></footer>
+      </main>
+    </div>
+  </div>
+  <dialog><form><h2 id="modalTitle"></h2><div id="fields"></div><p id="error" role="alert"></p><div class="actions"><button type="button" id="cancel">Cancelar</button><button type="submit">Salvar</button></div></form></dialog>
+</body>
+</html>

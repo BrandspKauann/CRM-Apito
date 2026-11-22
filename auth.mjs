@@ -1,0 +1,77 @@
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+
+const username = process.env.CRM_ADMIN_USER;
+const password = process.env.CRM_ADMIN_PASSWORD;
+const secret = process.env.CRM_SESSION_SECRET;
+if (!username || !password || password.length < 16 || !secret || secret.length < 32) {
+  throw new Error('Configure CRM_ADMIN_USER, CRM_ADMIN_PASSWORD (mínimo 16 caracteres) e CRM_SESSION_SECRET (mínimo 32 caracteres)');
+}
+
+const cookieName = 'crm_apito_session';
+const lifetimeSeconds = 60 * 60 * 24;
+const digest = value => createHash('sha256').update(value).digest();
+const equal = (left, right) => timingSafeEqual(digest(left), digest(right));
+const signature = value => createHmac('sha256', secret).update(value).digest('base64url');
+const send = (res, status, value, headers = {}) => res.writeHead(status, {
+  'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers,
+}).end(JSON.stringify(value));
+const sameOrigin = req => {
+  if (!req.headers.origin) return true;
+  try { return new URL(req.headers.origin).host === req.headers.host; } catch { return false; }
+};
+function cookieOptions(req) {
+  const secure = req.socket?.encrypted || req.headers['x-forwarded-proto'] === 'https';
+  return `Path=/; HttpOnly; SameSite=Strict${secure ? '; Secure' : ''}`;
+}
+function isAuthenticated(req) {
+  const raw = (req.headers.cookie || '').split(';').map(part => part.trim()).find(part => part.startsWith(cookieName + '='));
+  if (!raw) return false;
+  const [payload, mac] = raw.slice(cookieName.length + 1).split('.');
+  if (!payload || !mac || !equal(signature(payload), mac)) return false;
+  try {
+    const session = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    return session.user === username && Number.isSafeInteger(session.expires) && session.expires > Date.now();
+  } catch { return false; }
+}
+function issueCookie(req) {
+  const payload = Buffer.from(JSON.stringify({user: username, expires: Date.now() + lifetimeSeconds * 1000})).toString('base64url');
+  return `${cookieName}=${payload}.${signature(payload)}; Max-Age=${lifetimeSeconds}; ${cookieOptions(req)}`;
+}
+export function requireAuth(req, res) {
+  if (isAuthenticated(req)) return true;
+  send(res, 401, {error: 'Acesso não autorizado'});
+  return false;
+}
+export async function handleAuth(req, res) {
+  if (req.url === '/api/session' && req.method === 'GET') {
+    send(res, 200, {authenticated: isAuthenticated(req)});
+    return true;
+  }
+  if (req.url === '/api/logout' && req.method === 'POST') {
+    if (!sameOrigin(req)) send(res, 403, {error: 'Origem inválida'});
+    else send(res, 200, {ok: true}, {'Set-Cookie': `${cookieName}=; Max-Age=0; ${cookieOptions(req)}`});
+    return true;
+  }
+  if (req.url !== '/api/login' || req.method !== 'POST') return false;
+  if (!sameOrigin(req) || !req.headers['content-type']?.startsWith('application/json')) {
+    send(res, 403, {error: 'Origem ou formato inválido'});
+    return true;
+  }
+  let size = 0;
+  const parts = [];
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > 4096) { send(res, 413, {error: 'Dados muito longos'}); return true; }
+    parts.push(chunk);
+  }
+  let body;
+  try { body = JSON.parse(Buffer.concat(parts).toString('utf8')); }
+  catch { send(res, 400, {error: 'Dados inválidos'}); return true; }
+  if (typeof body?.username !== 'string' || typeof body?.password !== 'string' ||
+      !equal(body.username, username) || !equal(body.password, password)) {
+    send(res, 401, {error: 'Usuário ou senha inválidos'});
+    return true;
+  }
+  send(res, 200, {ok: true}, {'Set-Cookie': issueCookie(req)});
+  return true;
+}

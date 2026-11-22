@@ -1,0 +1,13 @@
+[hidden] { display: none !important; }
+.login-screen { min-height: 100dvh; display: grid; place-items: center; padding: 24px; background: #f5f5f5; }
+.login-card { width: min(400px, 100%); padding: 32px; border: 1px solid #dedede; border-radius: 16px; background: #fff; box-shadow: 0 10px 32px #1111; }
+.login-card .brand-logo { display: block; margin: 0 auto 16px; }
+.login-card > p { text-align: center; color: #a9121d; font-weight: 700; }
+.login-card h1 { margin: 10px 0 24px; font-size: 30px; text-align: center; }
+.login-card label { display: block; margin-bottom: 16px; }
+.login-card input { display: block; margin-top: 7px; }
+.login-card button { width: 100%; margin-top: 8px; background: #d71920; color: #fff; font-weight: 700; }
+.login-card button:disabled { opacity: .6; cursor: wait; }
+#login-error { min-height: 20px; color: #a01d48; margin: 4px 0; }
+#logout { background: #eee; color: #333; }
+#logout:hover { background: #ddd; }
