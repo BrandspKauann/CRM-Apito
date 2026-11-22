@@ -1,0 +1,11 @@
+services:
+  crm:
+    build: .
+    environment:
+      BIND_HOST: 0.0.0.0
+    ports:
+      - "127.0.0.1:4317:4317"
+    volumes:
+      - crm_data:/app/data
+volumes:
+  crm_data:
