@@ -132,31 +132,37 @@ dialog form { padding: 24px; }
 
 /* Menu inspirado nos ingressos e programas impressos dos eventos. */
 .sidebar {
-  --paper: #f1ebdf;
+  --paper: #201c20;
   background: var(--paper);
-  color: #362b29;
-  border-right: 1px solid #d8cdbf;
+  color: #f4eae4;
+  border-right: 1px solid #42373c;
   padding: 0 13px 16px;
 }
 .sidebar .brand {
   align-self: stretch;
   margin: 0 -13px 27px;
   padding: 29px 15px 22px;
-  background: #781e30;
-  border-bottom: 5px double #e8c9ab;
+  background: #281d23;
+  border-bottom: 3px double #815c58;
 }
-.sidebar .wordmark { font-family: Georgia, serif; font-size: 21px; letter-spacing: -.055em; }
+.sidebar .wordmark { font-family: Georgia, serif; font-size: 18px; letter-spacing: -.055em; }
 .sidebar .wordmark > span { font-family: var(--font); color: #f5daca; }
 .sidebar nav { gap: 0; }
 .sidebar nav button {
-  min-height: 48px;
+  font: 600 18px/1.18 Georgia, Cambria, "Times New Roman", serif;
+  letter-spacing: -.035em;
+  min-height: 53px;
   padding: 10px 13px;
   border-radius: 0;
-  border-bottom: 1px solid #d9cfc1;
-  color: #473735;
+  border-bottom: 1px solid #40363a;
+  color: #eee1d7;
 }
-.sidebar .nav-icon { display: inline-flex; color: #835950; }
-.sidebar nav button:hover { background: #e6dccb; }
+.sidebar .nav-icon { display: inline-flex; color: #f0cfb4; }
+.sidebar .nav-icon svg { width: 24px; height: 24px; }
+.sidebar .ink-cut { fill: var(--paper); }
+.sidebar .ink-accent { fill: #d88979; }
+.sidebar [aria-current=page] .ink-accent { fill: #ffaba0; }
+.sidebar nav button:hover { background: #342a30; }
 .sidebar nav button[aria-current=page] {
   color: #fff9ef;
   background: #812236;
@@ -168,10 +174,10 @@ dialog form { padding: 24px; }
   border-radius: 0;
   background: radial-gradient(circle at 100% 50%,var(--paper) 3px,transparent 3.6px) right center/7px 12px repeat-y;
 }
-.sidebar nav button[data-page=integrations] { margin-top: 25px; border-top: 1px solid #c7b9a8; }
-.sidebar .workspace-foot { border-color: #c7b9a8; }
-.sidebar .workspace-monogram { border-radius: 0; background: transparent; border: 1px solid #ae8b78; color: #7a3340; font: italic 16px Georgia,serif; }
-.sidebar .workspace-foot small { color: #665a52; }
+.sidebar nav button[data-page=integrations] { margin-top: 25px; border-top: 1px solid #57454b; }
+.sidebar .workspace-foot { border-color: #57454b; }
+.sidebar .workspace-monogram { border-radius: 0; background: transparent; border: 1px solid #ae8b78; color: #e3c9b8; font: italic 16px Georgia,serif; }
+.sidebar .workspace-foot small { color: #c4b2ac; }
 @media (max-width: 760px) {
   .sidebar { padding: 0; border-right: 0; }
   .sidebar .brand { margin: 0; padding: 10px 16px; border-bottom-width: 3px; }
@@ -182,7 +188,7 @@ dialog form { padding: 24px; }
   .sidebar nav button, .sidebar nav button[data-page=integrations] {
     flex-direction: column; justify-content: center; text-align: center; min-height: 57px;
     margin: 0; padding: 5px 2px; gap: 3px; border: 0;
-    font-size: 11px; line-height: 1.15;
+    font-size: 13px; line-height: 1.05;
   }
   .sidebar nav button[aria-current=page]::after { display: none; }
 }

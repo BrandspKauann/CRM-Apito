@@ -31,6 +31,17 @@ const iconPaths = {
   calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4m10-4v4M3 10h18"/>',
   check: '<path d="m5 12 4 4L19 6"/>'
 };
+// Solid silhouettes and a second ink for the five navigation emblems.
+const navEmblems = {
+  home: '<path d="M2 21V3h20v18z"/><path class="ink-cut" d="M5 6h14v9H5z"/><path class="ink-accent" d="M6 13 9 8l3 3 5-4 2 6z"/><path class="ink-cut" d="M5 17h6v1H5z"/>',
+  companies: '<path d="m2 7 12-5v19H2z"/><path class="ink-accent" d="m16 8 6 3v10h-6z"/><path class="ink-cut" d="M5 9h2v3H5zm5-2h2v3h-2zm-5 7h2v3H5zm5-2h2v3h-2zm-2 6h3v3H8zm10-5h2v3h-2z"/>',
+  contacts: '<path class="ink-accent" d="m5 4 14-3 3 16-4 1V6H5z"/><path d="M2 7h16v15H2z"/><circle class="ink-cut" cx="10" cy="12" r="2.3"/><path class="ink-cut" d="M5.5 19c0-5.5 9-5.5 9 0z"/>',
+  deals: '<path d="M1 4h22l-4 5H5z"/><path class="ink-accent" d="M5.7 11h12.6l-3.5 4H9.2z"/><path d="M9.6 17h4.8v3.2l-4.8 2z"/>',
+  integrations: '<path d="m2 13 4-4 2 2 3-3 1.6 1.6-3 3 1.8 1.8 3-3L16 13l-3 3 1 1-3.5 3.5a5 5 0 0 1-7-7z"/><path class="ink-accent" d="m22 10-3 3-8-8 3-3a5 5 0 0 1 7 0l1 1a5 5 0 0 1 0 7z"/>'
+};
+function navIcon(page) {
+  return '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">' + navEmblems[page] + '</svg>';
+}
 function icon(name, size = 20) {
   return '<svg aria-hidden="true" focusable="false" width="' + size + '" height="' + size +
     '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">' +
@@ -245,8 +256,7 @@ function draw() {
   $('nav').innerHTML = Object.entries(pages).map(([key, title]) =>
     '<button type="button" data-page="' + key + '" aria-current="' +
     (page === key ? 'page' : 'false') + '"><span class="nav-icon">' +
-    icon({ home: 'home', companies: 'building', contacts: 'users', deals: 'chart',
-      integrations: 'plug' }[key], 19) + '</span><span>' + title + '</span></button>').join('');
+    navIcon(key) + '</span><span>' + title + '</span></button>').join('');
   const title = $('#page-title') || $('.heading h1');
   title.textContent = pages[page];
   const breadcrumb = $('#breadcrumb');
