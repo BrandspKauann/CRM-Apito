@@ -7,7 +7,7 @@ const pages = {
   automations: 'Automações',
   integrations: 'Integrações'
 };
-const singular = { companies: 'empresa', contacts: 'contato', deals: 'negócio' };
+const singular = { companies: 'empresa', contacts: 'contato', deals: 'oportunidade' };
 const labels = {
   name: 'Nome', city: 'Cidade', email: 'E-mail', phone: 'Telefone',
   company: 'Empresa', amount: 'Valor (R$)', contact: 'Contato',
@@ -16,7 +16,7 @@ const labels = {
 const keys = {
   companies: ['name', 'city'],
   contacts: ['name', 'company', 'email', 'phone'],
-  deals: ['name', 'contact', 'amount', 'stage', 'next_action', 'follow_up_on', 'notes']
+  deals: ['name', 'contact', 'company', 'amount', 'stage', 'next_action', 'follow_up_on', 'notes']
 };
 const iconPaths = {
   home: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
@@ -241,7 +241,7 @@ function linked(table, id) {
 }
 function dealContactLabel(deal) {
   const contact = directory.contacts.get(deal.contact);
-  return contact ? [contact.name, linked('companies', contact.company)].filter(Boolean).join(' · ') : '';
+  return [contact?.name, linked('companies', deal.company ?? contact?.company)].filter(Boolean).join(' · ');
 }
 function summary(row, table) {
   if (table === 'companies') return [row.city, RecordRelationships.websiteDomain(row.website)].filter(Boolean).join(' · ') || 'Cidade não informada';
@@ -284,9 +284,9 @@ function portfolioRanks(records) {
     contacts.set(person.id,(person.commercial_tags || []).reduce((best,tag)=>strongest(best,tags[tag] ?? 0),0));
   }
   for (const deal of records.deals) {
-    if (!contacts.has(deal.contact)) continue;
     const index = portfolioColumns.indexOf(stageLabel(deal.stage));
-    if (index >= 0) contacts.set(deal.contact,strongest(contacts.get(deal.contact),index));
+    if (index >= 0 && deal.company != null) companies.set(deal.company, strongest(companies.get(deal.company) ?? 0, index));
+    if (index >= 0 && contacts.has(deal.contact)) contacts.set(deal.contact,strongest(contacts.get(deal.contact),index));
   }
   for (const person of records.contacts) {
     if (person.company != null) companies.set(person.company,strongest(companies.get(person.company) ?? 0,contacts.get(person.id)));
@@ -298,7 +298,7 @@ function boardControls() {
   return '<div class="board-views" role="group" aria-label="Visualização do funil">' +
     ['contacts','companies','deals'].map(key =>
       '<button type="button" data-board-view="' + key + '" aria-pressed="' + (boardView === key) + '">' +
-      (key === 'deals' ? 'Negócios' : pages[key]) + ' <b>' + data[key].length.toLocaleString('pt-BR') +
+      (key === 'deals' ? 'Oportunidades' : pages[key]) + ' <b>' + data[key].length.toLocaleString('pt-BR') +
       '</b></button>').join('') + '</div>';
 }
 
@@ -379,13 +379,13 @@ function recordButton(row, table, variant = '', status) {
   if (variant === 'deal') {
     return '<button ' + target + ' class="record deal-card"><span class="deal-card-top">' +
       '<strong>' + esc(row.name) + '</strong>' + icon('chevron', 16) + '</span>' +
-      '<span class="deal-card-contact">' + esc(dealContactLabel(row) || 'Sem contato vinculado') +
+      '<span class="deal-card-contact">' + esc(dealContactLabel(row) || 'Vínculo pendente') +
       '</span><span class="deal-card-bottom"><b>' + money(row.amount) + '</b></span>' +
       followUpLine(row, status) + '</button>';
   }
   if (variant === 'recent') {
     return '<button ' + target + ' class="record recent-row"><span class="recent-row-copy"><strong>' +
-      esc(row.name) + '</strong><small>' + esc(linked('contacts', row.contact) || 'Sem contato vinculado') +
+      esc(row.name) + '</strong><small>' + esc(dealContactLabel(row) || 'Vínculo pendente') +
       '</small></span><span class="recent-row-side"><b>' + money(row.amount) + '</b>' +
       stagePill(row.stage) + '</span></button>';
   }
@@ -444,7 +444,7 @@ function renderRows() {
         '</h2><span class="stage-count">' + current.length + '</span></div><small>' + money(total) +
         '</small></div><div class="stage-column-body">' +
         (current.map(({ row, status }) => recordButton(row, 'deals', 'deal', status)).join('') ||
-          '<p class="stage-empty">' + (search || pipelineFocus !== 'all' ? 'Nenhum resultado nesta etapa.' : 'Nenhum negócio nesta etapa.') +
+          '<p class="stage-empty">' + (search || pipelineFocus !== 'all' ? 'Nenhum resultado nesta etapa.' : 'Nenhuma oportunidade nesta etapa.') +
           '</p>') + '</div></article>';
     }).join('');
     return;
@@ -538,7 +538,7 @@ function draw() {
     integrations: 'Configure as conexões com Kommo e MeEventos.'
   })[page];
   $('#create').innerHTML = icon('plus', 18) + '<span>' +
-    (page === 'companies' ? 'Nova empresa' : page === 'contacts' ? 'Novo contato' : 'Novo negócio') +
+    (page === 'companies' ? 'Nova empresa' : page === 'contacts' ? 'Novo contato' : 'Nova oportunidade') +
     '</span>';
   $('#create').hidden = ['integrations','automations'].includes(page);
   $('#alert').textContent = '';
@@ -559,13 +559,14 @@ function draw() {
     $('.records-toolbar').insertAdjacentHTML('beforebegin', boardControls());
     $('#rows').classList.toggle('portfolio', boardView !== 'deals');
     $('#search').placeholder = boardView === 'contacts' ? 'Buscar nome, empresa, e-mail ou telefone' :
-      boardView === 'companies' ? 'Buscar empresa, cidade ou domínio' : 'Buscar negócio';
+      boardView === 'companies' ? 'Buscar empresa, cidade ou domínio' : 'Buscar oportunidade';
     $('.records-hint').textContent = boardView === 'companies' ? 'Histórico dos contatos vinculados' :
-      boardView === 'contacts' ? 'Histórico comercial por contato' : 'Acompanhamento dos negócios';
+      boardView === 'contacts' ? 'Histórico comercial por contato' : 'Acompanhamento das oportunidades';
     if (boardView !== 'deals' && data.historyUnavailable) $('#alert').textContent =
       'O histórico importado está indisponível. O quadro considera apenas os negócios deste CRM.';
   }
   if (directoryFilters[page]) mountDirectoryFilter();
+  if (page === 'contacts') ContactSegments.mount($('.records-toolbar'), data, directory, apiFetch, form);
   $('#search').value = search;
   $('#search').oninput = event => { search = event.target.value; directoryPage = 1; boardPages.clear(); renderRows(); };
   renderRows();
@@ -676,7 +677,7 @@ async function showPreview(provider, card) {
 function form(table, id, trail = [], initial = {}) {
   const row = data[table].find(item => item.id === id) || initial;
   editing = { table, id };
-  $('#modalTitle').textContent = (id ? 'Editar ' : table === 'companies' ? 'Nova ' : 'Novo ') +
+  $('#modalTitle').textContent = (id ? 'Editar ' : table === 'contacts' ? 'Novo ' : 'Nova ') +
     singular[table];
   $('#fields').innerHTML = keys[table].map(key => {
     let input;
@@ -703,7 +704,10 @@ function form(table, id, trail = [], initial = {}) {
     return '<label>' + labels[key] + input + '</label>';
   }).join('');
   if (table === 'contacts') mountLinkPicker('company', row.company);
-  if (table === 'deals') mountLinkPicker('contact', row.contact);
+  if (table === 'deals') {
+    mountLinkPicker('contact', row.contact);
+    mountLinkPicker('company', row.company);
+  }
   if (table === 'deals') {
     const contactSelect = $('#fields select[name="contact"]');
     const details = document.createElement('section');
@@ -717,11 +721,35 @@ function form(table, id, trail = [], initial = {}) {
       details.innerHTML = contact
         ? '<h3>' + esc(contact.name) + '</h3><dl>' + entries.map(([label, value]) =>
           '<div><dt>' + label + '</dt><dd>' + esc(value || 'Não informado') + '</dd></div>').join('') + '</dl>'
-        : '<p>Selecione um contato para ver os dados dele aqui.</p>';
+        : '<p>Vincule um contato ou selecione uma empresa.</p>';
     }
     contactSelect.onchange = showContact;
     showContact();
-    if (id) $('#modalTitle').textContent = row.name;
+    if (id) {
+      $('#modalTitle').textContent = row.name;
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'rel-action';
+      remove.textContent = 'Excluir oportunidade';
+      remove.onclick = async () => {
+        if (!window.confirm('Excluir a oportunidade “' + row.name + '”? O contato e a empresa serão preservados.')) return;
+        remove.disabled = true;
+        const submit = $('dialog button[type=submit]');
+        submit.disabled = true;
+        try {
+          const response = await apiFetch('/api/deals/' + id, {method:'DELETE', headers:{'Content-Type':'application/json'}});
+          if (!response.ok && response.status !== 404) throw Error((await response.json()).error);
+          $('dialog').close();
+          await refresh();
+        } catch (error) {
+          ($('dialog').open ? $('#error') : $('#alert')).textContent = error.message;
+        } finally {
+          remove.disabled = false;
+          submit.disabled = false;
+        }
+      };
+      $('#fields').append(remove);
+    }
   }
   $('#error').textContent = '';
   RecordRelationships.mount(table, row, data, trail, form);
@@ -891,9 +919,11 @@ $('dialog form').onsubmit = async event => {
   button.disabled = true;
   try {
     const { table, id } = editing;
+    const values = Object.fromEntries(new FormData(event.target));
+    if (table === 'deals' && !values.contact && !values.company) throw Error('Vincule a oportunidade a um contato ou a uma empresa.');
     const response = await apiFetch('/api/' + table + (id ? '/' + id : ''), {
       method: id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(Object.fromEntries(new FormData(event.target)))
+      body: JSON.stringify(values)
     });
     if (!response.ok) throw Error((await response.json()).error);
     if (page === 'deals' && table === 'deals' && !id) {

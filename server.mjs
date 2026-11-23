@@ -1,3 +1,4 @@
+import {segmentData, validSegment, saveSegment} from './contact-segments.mjs';
 import {rulesApi,writeDeal} from './automations.mjs';
 import http from 'node:http';
 import {readFile} from 'node:fs/promises';
@@ -13,7 +14,7 @@ import {followUpError, writableFields} from './follow-up.mjs';
 const fields = {
   companies: ['name', 'city'],
   contacts: ['name', 'company', 'email', 'phone'],
-  deals: ['name', 'contact', 'amount', 'stage', 'notes', 'next_action', 'follow_up_on'],
+  deals: ['name', 'contact', 'company', 'amount', 'stage', 'notes', 'next_action', 'follow_up_on'],
 };
 const assets = {
   '/': ['index.html', 'text/html'],
@@ -22,6 +23,7 @@ const assets = {
   '/dashboard.css': ['dashboard.css', 'text/css'],
   '/pipeline.css': ['pipeline.css', 'text/css'],
   '/relationships.css': ['relationships.css', 'text/css'],
+  '/segments.js': ['segments.js','text/javascript'],
   '/directory.css': ['directory.css', 'text/css'],
   '/relationships.js': ['relationships.js', 'text/javascript'],
   '/kommo-import.js': ['kommo-import.js', 'text/javascript'],
@@ -79,15 +81,22 @@ export async function handler(req, res) {
       json(res, 200, data);
       return;
     }
+    const segments = req.url === '/api/contact-segments';
+    if (segments && req.method === 'GET') return json(res,200,await segmentData());
     const match = /^\/api\/(companies|contacts|deals)(?:\/(\d+))?$/.exec(req.url);
     const automation = req.url === '/api/automations';
     if (automation && req.method === 'GET') return await rulesApi(req,res,null,stages,json);
-    if (!match && !automation) { json(res, 404, {error:'Recurso não encontrado'}); return; }
+    if (!match && !automation && !segments) { json(res, 404, {error:'Recurso não encontrado'}); return; }
     const [, table, id] = match || [];
     const moveDeal = table === 'deals' && id && req.method === 'PATCH';
-    if (!automation && !moveDeal && req.method !== (id ? 'PUT' : 'POST')) { json(res, 405, {error:'Método inválido'}); return; }
+    const deleteDeal = table === 'deals' && id && req.method === 'DELETE';
+    if (!deleteDeal && !automation && !moveDeal && req.method !== (id ? 'PUT' : 'POST')) { json(res, 405, {error:'Método inválido'}); return; }
     if (!req.headers['content-type']?.startsWith('application/json') || !sameOrigin(req)) {
       json(res, 403, {error:'Origem ou formato inválido'}); return;
+    }
+    if (deleteDeal) {
+      const result = await query('DELETE FROM deals WHERE id = $1 RETURNING id', [id]);
+      return json(res, result.rowCount ? 200 : 404, result.rows[0] || {error:'Oportunidade não encontrada.'});
     }
     const chunks = []; let size = 0;
     for await (const chunk of req) {
@@ -98,6 +107,14 @@ export async function handler(req, res) {
     let body;
     try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
     catch { json(res, 400, {error:'Dados inválidos'}); return; }
+    if (segments) {
+      if (!validSegment(body)) return json(res,400,{error:'Confira o nome, o período e os filtros da lista.'});
+      try { return json(res,201,await saveSegment(body)); }
+      catch (error) {
+        if (error.code === '23505') return json(res,409,{error:'Já existe uma lista com esse nome.'});
+        throw error;
+      }
+    }
     if (automation) return await rulesApi(req,res,body,stages,json);
     if (moveDeal) {
       if (!stages.includes(body?.stage)) { json(res, 400, {error:'Etapa inválida'}); return; }
@@ -109,7 +126,7 @@ export async function handler(req, res) {
       json(res, 400, {error:'Informe um nome'}); return;
     }
     if (table === 'deals') {
-      const error = followUpError(body);
+      const error = (!body.contact && !body.company) ? 'Vincule a oportunidade a um contato ou a uma empresa.' : followUpError(body);
       if (error) { json(res, 400, {error}); return; }
     }
     const cols = writableFields(fields[table], body, Boolean(id));

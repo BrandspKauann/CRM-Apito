@@ -199,12 +199,12 @@ const RecordRelationships = (() => {
         }
         const people = data.contacts.filter(row => row.company === record.id);
         const names = new Map(people.map(row => [row.id, row.name]));
-        const deals = data.deals.filter(row => names.has(row.contact));
+        const deals = data.deals.filter(row => row.company === record.id || names.has(row.contact));
         groups.append(relationshipGroup('Contatos da empresa', people, 'contacts',
           row => [row.email, row.phone].filter(Boolean).join(' · '), 'Nenhum contato vinculado.', navigate));
-        groups.append(relationshipGroup('Negócios dos contatos', deals, 'deals',
+        groups.append(relationshipGroup('Oportunidades da empresa', deals, 'deals',
           row => [names.get(row.contact), row.stage, money(row.amount)].filter(Boolean).join(' · '),
-          'Nenhum negócio vinculado aos contatos.', navigate));
+          'Nenhuma oportunidade vinculada.', navigate));
       }
     }
     if (trail.length) {
