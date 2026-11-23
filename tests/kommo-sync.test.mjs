@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { unpackPage, preparePage, groupedLinks, initialStreams, combineEventPages } from '../kommo-sync.mjs';
+import { unpackPage, preparePage, groupedLinks, initialStreams, combineEventPages, capacityState } from '../kommo-sync.mjs';
+
+test('reserva capacidade para o CRM e permite retomar quando a branch cresce', () => {
+  const gib=1024**3;
+  const previous=capacityState(gib-32*1024**2,gib);
+  assert.equal(previous.availableBytes,0);
+  assert.equal(previous.reserveBytes,Math.ceil(gib/10));
+  assert.ok(capacityState(previous.usedBytes,2*gib).availableBytes>0);
+  assert.equal(capacityState(0,0),null);
+});
 
 test('consulta eventos por páginas de 100 aceitas pela conta', () => {
   const eventStream = initialStreams().find(item => item.stream === 'events');

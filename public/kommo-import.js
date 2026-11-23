@@ -11,6 +11,11 @@ const KommoImport = (() => {
   const streamStates = { pending: 'Aguardando', running: 'Em andamento', retrying: 'Aguardando nova tentativa',
     blocked: 'Acesso bloqueado', error: 'Falha', complete: 'Concluído' };
   const number = new Intl.NumberFormat('pt-BR');
+  const spaceNumber = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 });
+  function formatSpace(bytes) {
+    const gib = 1024 ** 3;
+    return bytes >= gib ? spaceNumber.format(bytes / gib) + ' GiB' : spaceNumber.format(bytes / (1024 ** 2)) + ' MiB';
+  }
   let snapshot, active = false, generation = 0, notice = '';
 
   function remember(enabled) {
@@ -29,11 +34,20 @@ const KommoImport = (() => {
     const completed = streams.filter(stream => stream.status === 'complete').length;
     const summary = panel.querySelector('[data-import-summary]');
     const statuses = { idle: 'Pronto para importar.', running: active ? 'Importação em andamento.' : 'Importação disponível para continuar.',
-      partial: 'Importação parcial. Consulte as pendências por recurso.', complete: 'Importação concluída.' };
+      partial: 'Importação parcial. Consulte as pendências por recurso.', complete: 'Importação concluída.',
+      paused: snapshot?.pauseReason === 'capacity' ?
+        'Importação pausada para preservar espaço no banco. Após liberar espaço ou ampliar a capacidade, retome do último lote salvo.' :
+        'Importação pausada.' };
     summary.textContent = notice || statuses[state] || 'Consultando importação…';
     button.disabled = active || state === 'complete';
+    const storage = state === 'paused' && snapshot.pauseReason === 'capacity' ? snapshot.storage : null;
+    const capacity = panel.querySelector('[data-import-capacity]');
+    capacity.hidden = !storage || ![storage.usedBytes, storage.limitBytes, storage.reserveBytes].every(Number.isFinite);
+    if (!capacity.hidden) capacity.textContent = 'Uso do banco: ' + formatSpace(storage.usedBytes) + ' de ' +
+      formatSpace(storage.limitBytes) + '. Espaço livre: ' + formatSpace(Math.max(0, storage.limitBytes - storage.usedBytes)) +
+      '. Reserva para o CRM: ' + formatSpace(storage.reserveBytes) + '.';
     button.textContent = active ? 'Aguarde…' : state === 'partial' ? 'Tentar recursos pendentes' :
-      state === 'running' ? 'Continuar importação' : state === 'complete' ? 'Importação concluída' :
+      state === 'paused' ? 'Verificar espaço e retomar' : state === 'running' ? 'Continuar importação' : state === 'complete' ? 'Importação concluída' :
       state === 'idle' ? 'Iniciar importação' : 'Atualizar status';
     const details = panel.querySelector('details');
     details.hidden = streams.length === 0;
@@ -54,7 +68,7 @@ const KommoImport = (() => {
     const response = await apiFetch(endpoint, options);
     const result = await response.json().catch(() => ({}));
     if (!response.ok || !Array.isArray(result.streams) ||
-        !['idle','running','complete','partial'].includes(result.status)) {
+        !['idle','running','complete','partial','paused'].includes(result.status)) {
       const error = new Error(result.error || 'Falha ao consultar a importação.');
       error.transient = response.status === 429 || response.status >= 500;
       throw error;
@@ -109,6 +123,7 @@ const KommoImport = (() => {
   function mount(panel) {
     panel.innerHTML = '<section class="kommo-import" aria-label="Importação para o Neon"><h3>Importar para o Neon</h3>' +
       '<p id="kommo-import-summary" data-import-summary role="status"></p>' +
+      '<p data-import-capacity hidden></p>' +
       '<details hidden><summary></summary><table><thead><tr><th>Recurso</th><th>Lidos</th><th>Estado</th></tr></thead><tbody></tbody></table></details>' +
       '<div class="integration-actions"><button type="button" data-import-action></button></div></section>';
     panel.querySelector('button').onclick = () => run(Boolean(snapshot), snapshot?.status === 'partial');

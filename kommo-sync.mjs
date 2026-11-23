@@ -238,8 +238,25 @@ async function initialize(origin, request) {
   });
   return account;
 }
-async function summarize(account) {
-  if (!account) return {status:'idle', streams:[], retryAfterMs:0};
+export function capacityState(usedBytes, limitBytes) {
+  if (!Number.isSafeInteger(limitBytes) || limitBytes<=0) return null;
+  const mib = 1024**2;
+  const reserveBytes = Math.min(Math.max(64*mib,Math.ceil(limitBytes/10)),256*mib,Math.ceil(limitBytes/2));
+  return {usedBytes, limitBytes, reserveBytes, availableBytes:Math.max(0,limitBytes-usedBytes-reserveBytes)};
+}
+async function readCapacity() {
+  const {query} = await import('./db.mjs');
+  // Neon exposes its live logical branch limit as a PostgreSQL memory-size setting.
+  // Read the sizes of every database, including templates, on the same compute.
+  const {rows:[row]}=await query(`SELECT pg_size_bytes(nullif(current_setting('neon.max_cluster_size',true),'')) AS ceiling,
+    CASE WHEN current_setting('neon.max_cluster_size',true) IS NOT NULL THEN
+      (SELECT sum(pg_database_size(oid))::bigint FROM pg_database) END AS used`);
+  return capacityState(Number(row.used),Number(row.ceiling));
+}
+async function summarize(account, storage) {
+  const paused=storage && storage.availableBytes===0;
+  const capacity=paused ? {pauseReason:'capacity',storage} : {};
+  if (!account) return {status:paused?'paused':'idle', streams:[], retryAfterMs:0,...capacity};
   const {query} = await import('./db.mjs');
   const result = await query(`SELECT COALESCE(cursor->'spec'->>'kind','account') AS stream,
     CASE WHEN bool_or(status='running') THEN 'running'
@@ -257,12 +274,12 @@ async function summarize(account) {
   const pauseUntil = Math.max(0,...rows.map(r=>Number(r.pause_until) || 0));
   const next = rows.filter(r=>r.retry_at).map(r=>Number(r.retry_at));
   const retryAt = next.length && !rows.some(r=>['pending','running'].includes(r.status)) ? Math.min(...next) : 0;
-  return {status,streams:rows.map(({stream,status,rows_seen,error}) =>
+  return {status:hasWork && paused?'paused':status,...(hasWork?capacity:{}),streams:rows.map(({stream,status,rows_seen,error}) =>
     ({stream,status,rows_seen:Number(rows_seen),...(error ? {error} : {})})),
-    retryAfterMs:hasWork ? Math.max(250,pauseUntil-Date.now(),retryAt-Date.now()) : 0};
+    retryAfterMs:hasWork && !paused ? Math.max(250,pauseUntil-Date.now(),retryAt-Date.now()) : 0};
 }
 export async function syncStatus(origin) {
-  return summarize(await loadSource(origin));
+  return summarize(await loadSource(origin),await readCapacity());
 }
 // Kommo also serves a filtered entity-links collection on supported accounts.
 // Never infer a missing owner's links from some other owner's successful result.
@@ -385,17 +402,22 @@ async function onePage(client, account, request) {
     sourceState.probe = probe.rows[0].spec.stream;
     break;
   }
-  const result = await client.query(`SELECT stream,cursor FROM kommo_import.sync_state
+  const result = await client.query(`WITH eligible AS (
+    SELECT stream,cursor,updated_at,CASE
+      WHEN stream='events' THEN 1 WHEN stream LIKE 'links.%:%' THEN 2
+      WHEN stream LIKE 'file_links:%' OR stream LIKE 'file_versions:%' THEN 3
+      WHEN stream LIKE 'messages:%' THEN 4 ELSE 0 END AS family
+    FROM kommo_import.sync_state
     WHERE account_id=$1 AND status IN ('pending','running','retrying')
       AND COALESCE((cursor->>'retryAt')::bigint,0) <= $2
       AND NOT EXISTS(SELECT FROM kommo_import.sync_state WHERE account_id=$1 AND stream='@source'
         AND COALESCE((cursor->>'pauseUntil')::bigint,0)>$2)
+    ) SELECT stream,cursor,family FROM eligible
     ORDER BY CASE WHEN (stream LIKE 'file_links:%' AND NOT $3::boolean) OR
       (stream='talks' AND cursor->>'page'='1') OR (stream LIKE 'messages:%' AND NOT EXISTS (
           SELECT FROM kommo_import.sync_state WHERE account_id=$1 AND stream='@source' AND cursor->>'messageProbed'='true'
-        )) THEN -1
-        WHEN stream LIKE 'links.%:%' OR stream LIKE 'file_links:%' OR stream LIKE 'file_versions:%' THEN 2
-        WHEN stream LIKE 'messages:%' THEN 1 ELSE 0 END, updated_at, stream LIMIT 1`,[account.id,Date.now(),Boolean(sourceState.fileLinkProbed)]);
+        )) THEN -1 ELSE mod(family-$4::int+5,5) END, updated_at, stream LIMIT 1`,
+  [account.id,Date.now(),Boolean(sourceState.fileLinkProbed),sourceState.nextFamily || 0]);
   if (!result.rows.length) return false;
   let {stream,cursor} = result.rows[0];
   if (sourceState.probe) {
@@ -403,6 +425,9 @@ async function onePage(client, account, request) {
       [account.id,sourceState.probe]);
     if (probe.rowCount) ({stream,cursor}=probe.rows[0]);
   }
+  const family=sourceState.probe ? 2 : result.rows[0].family;
+  await client.query(`UPDATE kommo_import.sync_state SET cursor=jsonb_set(cursor,'{nextFamily}',to_jsonb($2::int))
+    WHERE account_id=$1 AND stream='@source'`,[account.id,(family+1)%5]);
   const {spec,page} = cursor;
   let next, batch;
   try {
@@ -469,7 +494,10 @@ async function markFailure(client,account,stream,cursor,error) {
 }
 export async function advanceSync(origin, request, retry) {
   const started = Date.now();
-  const account = await loadSource(origin) || await initialize(origin, request);
+  const storage=await readCapacity();
+  let account=await loadSource(origin);
+  if (storage && !storage.availableBytes) return summarize(account,storage);
+  account ||= await initialize(origin,request);
   const {transaction,query} = await import('./db.mjs');
   if (retry) await transaction(async client => {
     await client.query('SELECT pg_advisory_xact_lock($1::bigint)',[account.id]);
@@ -483,5 +511,5 @@ export async function advanceSync(origin, request, retry) {
     if (!await transaction(client=>onePage(client,account,request))) break;
     await new Promise(resolve=>setTimeout(resolve,210));
   }
-  return summarize(account);
+  return summarize(account,await readCapacity());
 }
