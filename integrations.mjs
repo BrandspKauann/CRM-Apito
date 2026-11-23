@@ -93,6 +93,7 @@ export async function handleIntegration(req, res) {
       };
       send(res,200,await advanceSync(origin,read,options?.retry===true));
     } catch (e) {
+      console.error('Falha na importação Kommo', String(e.code || e.status || e.name).slice(0,50));
       send(res,503,{error:e.remote ? 'Não foi possível consultar a conta na Kommo.' : 'Não foi possível atualizar a importação no banco.'});
     }
     return true;

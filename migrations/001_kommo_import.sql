@@ -124,4 +124,17 @@ SELECT account_id, source_id, payload->>'name' AS name,
        (payload->>'is_trashed')::boolean AS is_trashed, synced_at
 FROM kommo_import.records WHERE kind = 'files';
 
+DO $grants$
+BEGIN
+  IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'crm_app') THEN
+    GRANT USAGE ON SCHEMA kommo_import TO crm_app;
+    GRANT SELECT, INSERT, UPDATE ON kommo_import.records, kommo_import.edges,
+      kommo_import.sync_state TO crm_app;
+    GRANT SELECT ON kommo_import.contacts, kommo_import.companies, kommo_import.leads,
+      kommo_import.notes, kommo_import.relationships, kommo_import.tasks, kommo_import.events,
+      kommo_import.talks, kommo_import.messages, kommo_import.files TO crm_app;
+  END IF;
+END;
+$grants$;
+
 COMMIT;
