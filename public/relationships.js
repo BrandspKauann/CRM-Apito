@@ -160,6 +160,20 @@ const RecordRelationships = (() => {
       const groups = element('div', 'rel-groups');
       fields.append(properties, groups);
       if (person) {
+        if (record.commercial_history?.length) {
+          const history = element('section', 'rel-group');
+          history.append(element('h3', 'rel-heading', 'Histórico comercial'));
+          history.append(element('p', 'rel-copy', record.commercial_tags.join(' · ')));
+          const labels = {won:'Negócio ganho', approved:'Orçamento aprovado', lost:'Oportunidade perdida',
+            open:'Em aberto', closed_unknown:'Finalizado sem desfecho', cancelled:'Cancelado'};
+          for (const group of record.commercial_history) {
+            const details = element('details');
+            details.append(element('summary', null, group.origin + ' · ' + labels[group.outcome] + ' (' + group.refs.length + ')'));
+            details.append(element('p', 'rel-copy', group.refs.map(id => '#' + id).join(', ')));
+            history.append(details);
+          }
+          groups.append(history);
+        }
         const select = properties.querySelector('[name=company]');
         const companySection = element('div');
         function showCompany() {
