@@ -9,3 +9,5 @@ Ao concluir uma alteração neste CRM:
 5. Confirme o resultado das ações externas autorizadas antes de declarar a alteração concluída. Se uma falhar, informe o passo pendente com precisão e retome a partir dele, sem duplicar registros ou emails.
 
 Uma publicação de código não implica implantação. Consulte o projeto da Vercel e só descreva a versão como online após confirmar uma implantação funcional. Mudanças ainda não concluídas devem aparecer como pendentes na documentação e no email.
+
+Publique cada alteração concluída e testada na produção do CRM em https://crm-apito.vercel.app/ e verifique a funcionalidade nesse endereço.
