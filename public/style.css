@@ -50,11 +50,6 @@ nav button svg { flex: 0 0 auto; width: 18px; height: 18px; }
 nav button:hover { background: #322d32; color: white; }
 nav button[aria-current=page] { background: #493038; color: #ffe0db; font-weight: 650; }
 nav button[aria-current=page]::after { content: ""; position: absolute; right: 13px; width: 5px; height: 5px; background: #ff9d8d; border-radius: 50%; }
-.workspace-foot { display: flex; align-items: center; gap: 10px; margin-top: auto; padding: 18px 4px 2px; border-top: 1px solid #443c42; }
-.workspace-monogram { width: 35px; height: 35px; display: grid; place-items: center; border-radius: 50%; background: #473b40; color: #f1d5cd; font-size: 12px; font-weight: bold; }
-.workspace-foot strong, .workspace-foot small { display: block; }
-.workspace-foot strong { font-size: 13px; }
-.workspace-foot small { font-size: 11px; color: #c5b7be; margin-top: 1px; }
 .workspace-main { min-width: 0; }
 .topbar {
   min-height: 62px; padding: 8px clamp(18px,3.4vw,54px); background: var(--surface);
@@ -117,8 +112,6 @@ dialog form { padding: 24px; }
   .wordmark { font-size: 16px; }
   .wordmark > span { margin-top: 2px; font-size: 8px; }
   .nav-label { display: none; }
-  .workspace-foot { position: absolute; right: 16px; top: 19px; padding: 0; border: 0; }
-  .workspace-monogram,.workspace-foot strong { display: none; }
   nav { display: flex; overflow-x: auto; gap: 3px; padding: 3px; scrollbar-width: thin; }
   nav button { flex: 0 0 auto; padding: 8px 10px; gap: 7px; min-height: 38px; font-size: 13px; }
   nav button[aria-current=page]::after { display: none; }
@@ -175,15 +168,11 @@ dialog form { padding: 24px; }
   background: radial-gradient(circle at 100% 50%,var(--paper) 3px,transparent 3.6px) right center/7px 12px repeat-y;
 }
 .sidebar nav button[data-page=integrations] { margin-top: 25px; border-top: 1px solid #57454b; }
-.sidebar .workspace-foot { border-color: #57454b; }
-.sidebar .workspace-monogram { border-radius: 0; background: transparent; border: 1px solid #ae8b78; color: #e3c9b8; font: italic 16px Georgia,serif; }
-.sidebar .workspace-foot small { color: #c4b2ac; }
 @media (max-width: 760px) {
   .sidebar { padding: 0; border-right: 0; }
   .sidebar .brand { margin: 0; padding: 10px 16px; border-bottom-width: 3px; }
   .sidebar .brand img { width: 38px; height: 38px; }
   .sidebar .wordmark { font-size: 18px; }
-  .sidebar .workspace-foot small { color: #f5daca; }
   .sidebar nav { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); overflow: visible; padding: 0; }
   .sidebar nav button, .sidebar nav button[data-page=integrations] {
     flex-direction: column; justify-content: center; text-align: center; min-height: 57px;
