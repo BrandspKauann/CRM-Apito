@@ -7,6 +7,12 @@ const checks = {
     where (n.nspname='crm_enrichment' or (n.nspname='public' and c.relname in ('contacts','deals')))
     and c.relkind in ('r','v','m') group by n.nspname,c.relname,c.oid`,
   permissions: `select has_schema_privilege('public','create') can_create,has_schema_privilege('crm_enrichment','create') can_create_enrichment`,
+  sources: 'select source,count(*)::int n from crm_enrichment.crm_contact_sources group by 1',
+  mee: 'select source_type,match_result,count(*)::int n from crm_enrichment.meeventos_crosswalk group by 1,2',
+  attributes: `select source_type,k,count(*)::int n from crm_enrichment.meeventos_crosswalk
+    cross join lateral jsonb_object_keys(attributes) k group by 1,2 order by 1,2`,
+  dbroles: `select current_database() db,current_user role,pg_get_userbyid(c.relowner)=current_user owns_contacts
+    from pg_class c where c.oid='public.contacts'::regclass`,
   configs: 'select provider,base_url from integration_configs',
   streams: `select kind,count(*)::int n,max(synced_at)::date latest from kommo_import.records
     where kind in ('contacts','leads','pipelines','events') group by kind`,
