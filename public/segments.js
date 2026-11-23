@@ -2,6 +2,11 @@ const ContactSegments = (() => {
   const kinds = {'':'Qualquer evento',created:'Virou oportunidade',won:'Conversão em cliente',lost:'Oportunidade perdida',approved:'Orçamento aprovado',event:'Data do evento contratado ou orçado'};
   const options = pairs => Object.entries(pairs).map(([value,name]) => '<option value="'+value+'">'+name+'</option>').join('');
   function match(person, events, criteria) {
+    if (criteria.groups) {
+      const hits = criteria.groups.map(group => match(person,events,group));
+      if (criteria.mode === 'all' ? hits.some(hit => !hit) : hits.every(hit => !hit)) return null;
+      return [...new Set(hits.filter(Boolean).flat())];
+    }
     const {kind,origin,from,to,profile} = criteria;
     const hasEmail = Boolean(person.email?.trim()), hasPhone = Boolean(person.phone?.trim());
     if ((profile === 'email' || profile === 'both') && !hasEmail ||
@@ -42,18 +47,28 @@ const ContactSegments = (() => {
         byContact.get(event.contact_id).push(event);
       }
       body.innerHTML = '<label>Listas salvas<select name="saved"><option value="">Nova segmentação</option></select></label>'+
-        '<h2>Regras da lista</h2><form class="segment-filters"><label>Evento comercial<select name="kind">'+options(kinds)+'</select></label>'+
+        '<h2>Regras da lista</h2><label>Incluir contatos que atendam<select name="mode"><option value="any">A qualquer grupo (OU)</option><option value="all">A todos os grupos (E)</option></select></label><div class="segment-groups"></div><form class="segment-filters"><label>Evento comercial<select name="kind">'+options(kinds)+'</select></label>'+
         '<label>Origem<select name="origin">'+options({'':'Todas',Kommo:'Kommo',MeEventos:'MeEventos','CRM Apito':'CRM Apito'})+'</select></label>'+
         '<label>Dados do contato<select name="profile">'+options({'':'Todos',email:'Com e-mail',phone:'Com telefone',both:'Com e-mail e telefone',company:'Com empresa'})+'</select></label>'+
         '<label>Período<select name="period">'+options({all:'Todo o histórico',year:'Ano',month:'Mês e ano',day:'Dia específico',since:'A partir de',range:'Intervalo'})+'</select></label>'+
-        '<div class="segment-dates"></div><button type="submit">Aplicar regras</button></form>'+
+        '<div class="segment-dates"></div></form><button type="button" data-add>Adicionar grupo de regras</button><button type="button" data-apply>Aplicar regras</button>'+
         '<div class="segment-tools"><label>Nome da lista<input name="listName" maxlength="100"></label><button type="button" data-save>Salvar nova lista</button>'+
         '<button type="button" data-export>Exportar CSV</button></div><p role="status"></p><div class="segment-results"></div>';
-      const form = body.querySelector('form'), inputs = form.elements;
-      const dates = form.querySelector('.segment-dates'), saved = body.querySelector('[name=saved]');
+      const template = body.querySelector('form');
+      template.remove();
+      const container = body.querySelector('.segment-groups'), editors = new Map();
+      const saved = body.querySelector('[name=saved]'), mode = body.querySelector('[name=mode]');
       const output = body.querySelector('.segment-results'), notice = body.querySelector('[role=status]');
       const name = body.querySelector('[name=listName]');
       let results = [], offset = 0;
+      function addGroup(initial) {
+        const form = template.cloneNode(true), inputs = form.elements, dates = form.querySelector('.segment-dates');
+        const group = document.createElement('fieldset'), legend = document.createElement('legend');
+        legend.textContent = 'Condições do grupo (E)';
+        const remove = document.createElement('button');
+        remove.type='button'; remove.textContent='Remover grupo';
+        remove.onclick=()=>{if(editors.size>1){editors.delete(group);group.remove();updateButtons();}};
+        group.append(legend,form,remove); container.append(group);
       function dateInputs() {
         const mode = inputs.period.value;
         const type = {year:'number',month:'month',day:'date',since:'date',range:'date'}[mode];
@@ -61,7 +76,7 @@ const ContactSegments = (() => {
           '<input required name="start" type="'+type+'" '+(mode==='year'?'min="1000" max="9999"':'')+'></label>'+
           (mode==='range'?'<label>Até<input required type="date" name="end"></label>':'');
       }
-      function criteria() {
+      function read() {
         if (!form.reportValidity()) return null;
         let from = inputs.start?.value || '', to = from;
         switch (inputs.period.value) {
@@ -76,6 +91,32 @@ const ContactSegments = (() => {
         if (from && to && from>to) { notice.textContent='A data final deve ser igual ou posterior à inicial.'; return null; }
         return {kind:inputs.kind.value,origin:inputs.origin.value,profile:inputs.profile.value,from,to};
       }
+        inputs.period.onchange=dateInputs;
+        form.onsubmit=e=>{e.preventDefault();apply();};
+        if(initial) {
+          for(const key of ['kind','origin','profile']) inputs[key].value=initial[key];
+          inputs.period.value=initial.from ? (initial.to ? 'range':'since') : 'all';
+          dateInputs();
+          if(inputs.start) inputs.start.value=initial.from;
+          if(inputs.end) inputs.end.value=initial.to;
+        }
+        editors.set(group,read);updateButtons();
+      }
+      function updateButtons(){
+        for(const group of editors.keys()) group.lastElementChild.disabled=editors.size===1;
+        body.querySelector('[data-add]').disabled=editors.size>=30;
+      }
+      body.querySelector('[data-add]').onclick=()=>addGroup();
+      body.querySelector('[data-apply]').onclick=()=>apply();
+      function criteria(){
+        const groups=Array.from(editors.values(),read=>read());
+        if(groups.includes(null))return null;
+        if(groups.length>1 && groups.some(group=>Object.values(group).every(v=>!v))){
+          notice.textContent='Escolha uma condição em cada grupo ou remova o grupo vazio.';return null;
+        }
+        return {mode:mode.value,groups};
+      }
+      addGroup();
       function show() {
         output.replaceChildren();
         const count=document.createElement('strong');
@@ -109,19 +150,12 @@ const ContactSegments = (() => {
       lists.forEach(addList);
       saved.onchange=()=>{
         const list=lists.find(v=>String(v.id)===saved.value);
-        form.reset();inputs.period.value='all'; name.value=list?.name||'';
+        editors.clear();container.replaceChildren();name.value=list?.name||'';
         const c=list?.criteria;
-        if(c) {
-          for(const key of ['kind','origin','profile']) inputs[key].value=c[key];
-          inputs.period.value=c.from ? (c.to ? 'range':'since') : 'all';
-        }
-        dateInputs();
-        if(inputs.start) inputs.start.value=c.from;
-        if(inputs.end) inputs.end.value=c.to;
+        mode.value=c?.mode||'any';
+        for(const group of c?.groups || [c]) addGroup(group);
         apply();
       };
-      inputs.period.onchange=dateInputs;
-      form.onsubmit=e=>{e.preventDefault();apply();};
       const save=body.querySelector('[data-save]');
       save.onclick=async()=>{
         const c=apply();if(!c)return;

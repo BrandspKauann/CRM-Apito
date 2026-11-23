@@ -3,7 +3,7 @@ const pages = {
   home: 'Visão geral',
   companies: 'Empresas',
   contacts: 'Contatos',
-  segments: 'Segmentação',
+  segments: 'Segmentação de contatos',
   deals: 'Funil de negócios',
   automations: 'Automações',
   integrations: 'Integrações'

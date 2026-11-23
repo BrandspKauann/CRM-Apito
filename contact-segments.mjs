@@ -27,6 +27,8 @@ export async function segmentData() {
 export function validSegment(body) {
   const c = body?.criteria;
   if (typeof body?.name !== 'string' || !body.name.trim() || body.name.length > 100 || !c) return false;
+  if (Array.isArray(c.groups)) return ['any','all'].includes(c.mode) && c.groups.length>0 && c.groups.length<=30 &&
+    c.groups.every(group=>group && !('groups' in Object(group)) && validSegment({name:body.name,criteria:group}));
   const validDate = value => {
     if (value === '') return true;
     if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
