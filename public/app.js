@@ -785,18 +785,29 @@ async function drawAutomations() {
     const eventLabel = event => event === 'created' ? 'Negócio criado' : 'Negócio entrou em ' + event;
     root.innerHTML = '<div class="automation-layout"><section><h2>Nova automação</h2><form><label>Nome da regra<input name="name" required maxlength="120" placeholder="Retorno após perda"></label><label>Quando acontecer<select name="event">' +
       ['created',...data.stages].map(stage => '<option value="'+esc(stage)+'">'+esc(eventLabel(stage))+'</option>').join('')+
-      '</select></label><h3>Enviar email ao contato do negócio</h3><label>Assunto<input required name="subject" maxlength="200"></label><label>Mensagem<textarea required name="message" maxlength="8000" rows="5"></textarea></label><small>Use {{contato}} e {{negocio}} para personalizar a mensagem.</small><button>Criar regra</button></form></section><section><h2>Regras do funil</h2>'+
+      '</select></label><label>Ação<select name="action"><option value="followup">Definir próxima ação no negócio</option><option value="email">Enviar email ao contato</option></select></label><label><span data-subject>Assunto</span><input required name="subject" maxlength="200"></label><label><span data-message>Mensagem</span><textarea required name="message" maxlength="8000" rows="5"></textarea></label><small>Use {{contato}} e {{negocio}} para personalizar a mensagem.</small><button>Criar regra</button></form></section><section><h2>Regras do funil</h2>'+
       (state.configured?'':'<p role="status">Configure o SMTP da Hostinger no servidor para habilitar os envios.</p>')+
-      (state.rules.map(rule=>'<article><strong>'+esc(rule.name)+'</strong><p>'+esc(eventLabel(rule.event))+' · '+(rule.enabled?'Ativa':'Pausada')+'</p><button data-rule="'+rule.id+'">'+(rule.enabled?'Pausar':'Ativar')+'</button></article>').join('') || '<p>Nenhuma regra criada.</p>')+
+      (state.rules.map(rule=>'<article><strong>'+esc(rule.name)+'</strong><p>'+esc(eventLabel(rule.event))+' → '+(rule.action==='followup'?'Definir próxima ação':'Enviar email')+' · '+(rule.enabled?'Ativa':'Pausada')+'</p><button data-rule="'+rule.id+'">'+(rule.enabled?'Pausar':'Ativar')+'</button></article>').join('') || '<p>Nenhuma regra criada.</p>')+
       '<h2>Execuções recentes</h2>'+(state.runs.map(run=>'<article><strong>'+esc(run.name)+'</strong><p>Negócio #'+esc(run.deal_id)+' · '+esc(run.status)+'</p><small>'+esc(new Date(run.created_at).toLocaleString('pt-BR'))+'</small></article>').join('') || '<p>As execuções aparecem aqui quando um gatilho ocorrer.</p>')+'</section></div>';
     const save = async (button,method,body) => {
       button.disabled=true;
       try {await request(method,body); if(page==='automations') await drawAutomations();}
       catch(error){button.disabled=false; $('#alert').textContent=error.message;}
     };
-    root.querySelector('form').onsubmit = event => {
+    const form = root.querySelector('form');
+    function showAction() {
+      const internal = form.elements.action.value === 'followup';
+      form.elements.subject.closest('label').hidden=internal;
+      form.elements.subject.required=!internal;
+      form.querySelector('[data-message]').textContent=internal?'Próxima ação':'Mensagem';
+    }
+    form.elements.action.onchange=showAction;
+    showAction();
+    form.onsubmit = event => {
       event.preventDefault();
-      save(event.currentTarget.querySelector('button'),'POST',Object.fromEntries(new FormData(event.currentTarget)));
+      const body=Object.fromEntries(new FormData(form));
+      if(body.action==='followup') body.subject='Próxima ação';
+      save(form.querySelector('button'),'POST',body);
     };
     root.querySelectorAll('[data-rule]').forEach(button=>button.onclick=()=>{
       const rule=state.rules.find(row=>row.id===Number(button.dataset.rule));

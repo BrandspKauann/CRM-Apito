@@ -19,11 +19,11 @@ export async function rulesApi(req,res,body,stages,json) {
     const result = await query('UPDATE automation_rules SET enabled=$1 WHERE id=$2',[body.enabled,body.id]);
     return json(res,result.rowCount ? 200 : 404,{});
   }
-  if (req.method !== 'POST' || !['created',...stages].includes(body?.event) ||
+  if (req.method !== 'POST' || !['email','followup'].includes(body?.action ?? 'email') || !['created',...stages].includes(body?.event) ||
     !['name','subject','message'].every(key => typeof body[key] === 'string' && body[key].trim()) ||
     body.name.length>120 || body.subject.length>200 || body.message.length>8000 || /[\r\n]/.test(body.subject))
     return json(res,400,{error:'Confira o gatilho, o nome e o conteúdo do email.'});
-  await query('INSERT INTO automation_rules(name,event,subject,message) VALUES($1,$2,$3,$4)',[body.name.trim(),body.event,body.subject.trim(),body.message.trim()]);
+  await query('INSERT INTO automation_rules(name,event,subject,message,action) VALUES($1,$2,$3,$4,$5)',[body.name.trim(),body.event,body.subject.trim(),body.message.trim(),body.action ?? 'email']);
   json(res,201,{});
 }
 export async function writeDeal(sql,params,id) {
@@ -37,9 +37,15 @@ export async function writeDeal(sql,params,id) {
     const event = old ? deal.stage : 'created';
     const rules = (await client.query('SELECT * FROM automation_rules WHERE enabled AND event=$1',[event])).rows;
     const jobs = [];
-    for (const rule of rules) {
+    for (const rule of rules.sort((a,b)=>a.id-b.id)) {
       const fill = value => value.replace(/{{(contato|negocio)}}/g,(_,key)=>key==='contato' ? deal.person || '' : deal.name);
       const recipient = deal.email?.trim();
+      if (rule.action === 'followup') {
+        const next = fill(rule.message);
+        await client.query('UPDATE deals SET next_action=$1 WHERE id=$2',[next,deal.id]);
+        await client.query('INSERT INTO automation_runs(rule_id,deal_id,subject,message,status) VALUES($1,$2,$3,$4,$5)',[rule.id,deal.id,rule.subject,next,'Próxima ação definida']);
+        continue;
+      }
       const status = !/^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(recipient || '') ? 'Contato sem email válido' : configured() ? 'Aguardando envio' : 'SMTP não configurado';
       const row = await client.query('INSERT INTO automation_runs(rule_id,deal_id,recipient,subject,message,status) VALUES($1,$2,$3,$4,$5,$6) RETURNING *',[rule.id,deal.id,recipient,fill(rule.subject),fill(rule.message),status]);
       if (status==='Aguardando envio') jobs.push(row.rows[0]);

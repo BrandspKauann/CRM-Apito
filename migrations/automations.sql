@@ -7,3 +7,5 @@ CREATE TABLE IF NOT EXISTS automation_runs (
  recipient text, subject text NOT NULL, message text NOT NULL, status text NOT NULL,
  created_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE automation_rules ADD COLUMN IF NOT EXISTS action text NOT NULL DEFAULT 'email';
