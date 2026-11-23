@@ -17,26 +17,24 @@ const ContactSegments = (() => {
     if (/^\s*[=+@-]|^[\t\r\n]/.test(text)) text = "'"+text;
     return '"'+text.replaceAll('"','""')+'"';
   }
-  function mount(toolbar, data, directory, apiFetch, openRecord) {
-    const panel = document.createElement('details');
-    panel.className = 'segment-panel';
-    panel.innerHTML = '<summary>Segmentação de contatos</summary><div class="segment-body"><p role="status">Carregando histórico…</p></div>';
-    toolbar.before(panel);
-    const body = panel.querySelector('.segment-body');
-    let loaded = false, busy = false;
-    panel.ontoggle = async () => {
-      if (!panel.open || loaded || busy) return;
-      busy = true;
-      try {
-        const res = await apiFetch('/api/contact-segments');
-        if (!res.ok) throw Error('Histórico indisponível. Feche e reabra para tentar novamente.');
-        const payload = await res.json();
-        if (!panel.isConnected) return;
-        render(payload);
-        loaded = true;
-      } catch (error) { body.textContent = error.message; }
-      finally { busy = false; }
-    };
+  async function mount(root, data, directory, apiFetch, openRecord) {
+    const body = document.createElement('section');
+    body.className = 'segment-panel segment-body';
+    root.replaceChildren(body);
+    body.setAttribute('aria-label','Regras de segmentação');
+    body.textContent = 'Carregando histórico…';
+    try {
+      const response = await apiFetch('/api/contact-segments');
+      if (!response.ok) throw Error('Não foi possível carregar o histórico.');
+      const payload = await response.json();
+      if (body.isConnected) render(payload);
+    } catch (error) {
+      body.textContent = error.message + ' ';
+      const retry = document.createElement('button');
+      retry.textContent = 'Tentar novamente';
+      retry.onclick = () => mount(root, data, directory, apiFetch, openRecord);
+      body.append(retry);
+    }
     function render({lists,events}) {
       const byContact = new Map();
       for (const event of events) {
@@ -44,11 +42,11 @@ const ContactSegments = (() => {
         byContact.get(event.contact_id).push(event);
       }
       body.innerHTML = '<label>Listas salvas<select name="saved"><option value="">Nova segmentação</option></select></label>'+
-        '<form class="segment-filters"><label>Evento comercial<select name="kind">'+options(kinds)+'</select></label>'+
+        '<h2>Regras da lista</h2><form class="segment-filters"><label>Evento comercial<select name="kind">'+options(kinds)+'</select></label>'+
         '<label>Origem<select name="origin">'+options({'':'Todas',Kommo:'Kommo',MeEventos:'MeEventos','CRM Apito':'CRM Apito'})+'</select></label>'+
         '<label>Dados do contato<select name="profile">'+options({'':'Todos',email:'Com e-mail',phone:'Com telefone',both:'Com e-mail e telefone',company:'Com empresa'})+'</select></label>'+
         '<label>Período<select name="period">'+options({all:'Todo o histórico',year:'Ano',month:'Mês e ano',day:'Dia específico',since:'A partir de',range:'Intervalo'})+'</select></label>'+
-        '<div class="segment-dates"></div><button type="submit">Aplicar filtros</button></form>'+
+        '<div class="segment-dates"></div><button type="submit">Aplicar regras</button></form>'+
         '<div class="segment-tools"><label>Nome da lista<input name="listName" maxlength="100"></label><button type="button" data-save>Salvar nova lista</button>'+
         '<button type="button" data-export>Exportar CSV</button></div><p role="status"></p><div class="segment-results"></div>';
       const form = body.querySelector('form'), inputs = form.elements;

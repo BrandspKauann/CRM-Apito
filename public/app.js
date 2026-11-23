@@ -3,6 +3,7 @@ const pages = {
   home: 'Visão geral',
   companies: 'Empresas',
   contacts: 'Contatos',
+  segments: 'Segmentação',
   deals: 'Funil de negócios',
   automations: 'Automações',
   integrations: 'Integrações'
@@ -37,6 +38,7 @@ const navEmblems = {
   automations: '<path d="M14 1 3 14h8l-1 9L22 9h-9z"/>',
   home: '<path d="M2 21V3h20v18z"/><path class="ink-cut" d="M5 6h14v9H5z"/><path class="ink-accent" d="M6 13 9 8l3 3 5-4 2 6z"/><path class="ink-cut" d="M5 17h6v1H5z"/>',
   companies: '<path d="m2 7 12-5v19H2z"/><path class="ink-accent" d="m16 8 6 3v10h-6z"/><path class="ink-cut" d="M5 9h2v3H5zm5-2h2v3h-2zm-5 7h2v3H5zm5-2h2v3h-2zm-2 6h3v3H8zm10-5h2v3h-2z"/>',
+  segments: '<path d="M2 3h20l-7 8H9z"/><path class="ink-accent" d="M9 13h6v6l-6 3z"/>',
   contacts: '<path class="ink-accent" d="m5 4 14-3 3 16-4 1V6H5z"/><path d="M2 7h16v15H2z"/><circle class="ink-cut" cx="10" cy="12" r="2.3"/><path class="ink-cut" d="M5.5 19c0-5.5 9-5.5 9 0z"/>',
   deals: '<path d="M1 4h22l-4 5H5z"/><path class="ink-accent" d="M5.7 11h12.6l-3.5 4H9.2z"/><path d="M9.6 17h4.8v3.2l-4.8 2z"/>',
   integrations: '<path d="m2 13 4-4 2 2 3-3 1.6 1.6-3 3 1.8 1.8 3-3L16 13l-3 3 1 1-3.5 3.5a5 5 0 0 1-7-7z"/><path class="ink-accent" d="m22 10-3 3-8-8 3-3a5 5 0 0 1 7 0l1 1a5 5 0 0 1 0 7z"/>'
@@ -532,6 +534,7 @@ function draw() {
   $('#subtitle').textContent = ({
     home: 'Acompanhe o funil e os negócios mais recentes.',
     companies: 'Organize as empresas com quem você se relaciona.',
+    segments: 'Combine regras para criar listas de contatos e consultar quem atende aos critérios.',
     contacts: 'Consulte telefones, e-mails e empresas vinculadas.',
     deals: 'Acompanhe cada oportunidade até o fechamento.',
     automations: 'Defina o que acontece quando um negócio é criado ou muda de etapa.',
@@ -540,11 +543,12 @@ function draw() {
   $('#create').innerHTML = icon('plus', 18) + '<span>' +
     (page === 'companies' ? 'Nova empresa' : page === 'contacts' ? 'Novo contato' : 'Nova oportunidade') +
     '</span>';
-  $('#create').hidden = ['integrations','automations'].includes(page);
+  $('#create').hidden = ['integrations','automations','segments'].includes(page);
   $('#alert').textContent = '';
   $('#content').className = page === 'home' ? 'dashboard-view' :
     page === 'integrations' ? 'integrations-view' : 'records-view';
   document.title = pages[page] + ' | CRM Apito de Mestre';
+  if (page === 'segments') { ContactSegments.mount($('#content'), data, directory, apiFetch, form); return; }
   if (page === 'automations') { drawAutomations(); return; }
   if (page === 'integrations') { drawIntegrations(); return; }
   if (page === 'home') { drawHome(); return; }
@@ -566,7 +570,6 @@ function draw() {
       'O histórico importado está indisponível. O quadro considera apenas os negócios deste CRM.';
   }
   if (directoryFilters[page]) mountDirectoryFilter();
-  if (page === 'contacts') ContactSegments.mount($('.records-toolbar'), data, directory, apiFetch, form);
   $('#search').value = search;
   $('#search').oninput = event => { search = event.target.value; directoryPage = 1; boardPages.clear(); renderRows(); };
   renderRows();
