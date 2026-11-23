@@ -1,6 +1,23 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { unpackPage, preparePage } from '../kommo-sync.mjs';
+import { unpackPage, preparePage, groupedLinks, initialStreams } from '../kommo-sync.mjs';
+
+test('consulta eventos por páginas de 100 aceitas pela conta', () => {
+  const eventStream = initialStreams().find(item => item.stream === 'events');
+  assert.equal(eventStream.path, '/api/v4/events');
+  assert.equal(eventStream.limit, 100);
+});
+
+test('vínculos em lote exigem resposta completa e donos dentro do filtro', () => {
+  const link = {entity_type:'leads',entity_id:1,to_entity_type:'contacts',to_entity_id:6};
+  const body = {_total_items:1,_embedded:{links:[link]}};
+  assert.deepEqual([...groupedLinks(body,'leads',['1','2'])],[['1',[link]]]);
+  assert.equal(groupedLinks(body,'leads',['2']), null);
+  assert.equal(groupedLinks(body,'contacts',['1']), null);
+  assert.equal(groupedLinks({...body,_total_items:5},'leads',['1']), null);
+  assert.equal(groupedLinks({...body,_links:{next:{href:'?page=2'}}},'leads',['1']), null);
+  assert.equal(groupedLinks(null,'leads',['1']), null);
+});
 
 const spec = { stream: 'contacts', kind: 'contacts', path: '/api/v4/contacts', key: 'contacts', limit: 2 };
 

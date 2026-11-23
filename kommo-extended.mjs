@@ -6,6 +6,20 @@ export const extendedStreams = [
   {stream: 'trashed_files', kind: 'files', host: 'drive', path: '/v1.0/files?filter[deleted]=1', key: 'files', primaryKey: 'uuid', limit: 25},
 ];
 
+// Only classify an account-wide restriction after the API denies a real
+// conversation read. Unknown credential formats and future scopes must fall
+// back to the individual response, since visibility also depends on the contact.
+export function missingMessageScope(status, authenticate, token) {
+  if (status !== 403) return false;
+  if (/\berror\s*=\s*"?insufficient_scope\b/i.test(authenticate || '')) return true;
+  const scopesWithoutChatHistory = new Set(['crm', 'notifications', 'push_notifications', 'files', 'files_delete']);
+  try {
+    const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString());
+    return Array.isArray(payload.scopes) && payload.scopes.length > 0 &&
+      payload.scopes.every(scope => scopesWithoutChatHistory.has(scope));
+  } catch { return false; }
+}
+
 function link(fromKind, fromId, relation, toKind, toId) {
   return {from_kind: fromKind, from_id: String(fromId), relation, to_kind: toKind, to_id: String(toId), payload: {}};
 }

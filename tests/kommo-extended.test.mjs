@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {extendedStreams} from '../kommo-extended.mjs';
+import {extendedStreams, missingMessageScope} from '../kommo-extended.mjs';
 import {preparePage, unpackPage} from '../kommo-sync.mjs';
+
+test('uma restrição de contato não bloqueia as outras conversas', () => {
+  const token = scopes => 'test.' + Buffer.from(JSON.stringify({scopes})).toString('base64url') + '.test';
+  assert.equal(missingMessageScope(403, '', token(['crm', 'files'])), true);
+  assert.equal(missingMessageScope(401, '', token(['crm'])), false);
+  assert.equal(missingMessageScope(403, '', token(['crm', 'an_unrecognized_scope'])), false);
+  assert.equal(missingMessageScope(403, '', 'opaque'), false);
+  assert.equal(missingMessageScope(403, 'Bearer error="insufficient_scope"', 'opaque'), true);
+});
 
 test('associa a mensagem à conversa com o mesmo identificador composto usado na gravação', () => {
   const talks = extendedStreams.find(spec => spec.kind === 'talks');

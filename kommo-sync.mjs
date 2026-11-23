@@ -12,10 +12,10 @@ const sources = [
   ['users', 'users?with=role'], ['roles', 'roles?with=users'], ['sources', 'sources'],
   ['unsorted', 'leads/unsorted']
 ];
-export function initialStreams(cutoff) {
+export function initialStreams() {
   const specs = sources.map(([kind, path]) => ({kind, stream:kind, key:kind, path:base + path}));
-  // Freeze the upper endpoint of this archive so newly created events do not shift its pages.
-  specs.find(s => s.kind === 'events').path += '?filter[created_at][to]=' + cutoff;
+  // The events endpoint on this account accepts unfiltered pages of 100.
+  specs.find(s => s.kind === 'events').limit = 100;
   for (const entity of entityKinds) {
     for (const [path, key] of [['notes','notes'], ['tags','tags'], ['custom_fields','custom_fields'],
       ['custom_fields/groups','custom_field_groups']]) {
@@ -128,9 +128,17 @@ export function preparePage(spec, rows, account) {
 
 async function enqueue(client, accountId, specs) {
   if (!specs.length) return;
-  await client.query(`INSERT INTO kommo_import.sync_state(account_id,stream,cursor)
-    SELECT $1,s->>'stream',jsonb_build_object('spec',s,'page',1)
-    FROM jsonb_array_elements($2::jsonb) s ON CONFLICT DO NOTHING`,
+  await client.query(`WITH access AS (
+      SELECT EXISTS(SELECT FROM kommo_import.sync_state WHERE account_id=$1 AND stream='@source'
+        AND cursor->>'messageScopeDenied'='true') AS denied
+    ), queued AS (
+      SELECT s, denied AND s->>'kind'='messages' AS blocked FROM jsonb_array_elements($2::jsonb) s, access
+    )
+    INSERT INTO kommo_import.sync_state(account_id,stream,cursor,status)
+    SELECT $1,s->>'stream',jsonb_build_object('spec',s,'page',1) ||
+      CASE WHEN blocked THEN jsonb_build_object('error','Kommo requer a permissão External chat history.')
+      ELSE '{}'::jsonb END, CASE WHEN blocked THEN 'blocked' ELSE 'pending' END
+    FROM queued ON CONFLICT DO NOTHING`,
   [accountId, JSON.stringify(specs)]);
 }
 async function writePage(client, accountId, {records, edges, streams}) {
@@ -171,7 +179,7 @@ async function initialize(origin, request) {
   await transaction(async client => {
     await writePage(client,account.id,{
       records:[{kind:'account',source_id:String(account.id),payload:account}],
-      edges:[],streams:initialStreams(Math.floor(Date.now()/1000))
+      edges:[],streams:initialStreams()
     });
     await client.query(`INSERT INTO kommo_import.sync_state(account_id,stream,cursor,status,rows_seen)
       VALUES($1,'@source',jsonb_build_object('origin',$2::text),'complete',1)
@@ -205,23 +213,119 @@ async function summarize(account) {
 export async function syncStatus(origin) {
   return summarize(await loadSource(origin));
 }
+// Kommo also serves a filtered entity-links collection on supported accounts.
+// Never infer a missing owner's links from some other owner's successful result.
+export function groupedLinks(body, ownerKind, owners) {
+  const links = body?._embedded?.links;
+  if (!Array.isArray(links) || !links.length || body._links?.next?.href ||
+      (body._total_items != null && Number(body._total_items)!==links.length) ||
+      (links.length>=250 && body._total_items==null)) return null;
+  const allowed = new Set(owners.map(String)), grouped = new Map();
+  for (const link of links) {
+    const id = String(link.entity_id);
+    if (!allowed.has(id) || link.entity_type!==ownerKind || !link.to_entity_type || !link.to_entity_id) return null;
+    if (!grouped.has(id)) grouped.set(id,[]);
+    grouped.get(id).push(link);
+  }
+  return grouped;
+}
+function sameLinks(first, second) {
+  const identity = row => JSON.stringify([row.to_entity_type,String(row.to_entity_id),row.metadata ?? null]);
+  return JSON.stringify(first.map(identity).sort())===JSON.stringify(second.map(identity).sort());
+}
+async function setBulkMode(client, accountId, kind, value) {
+  await client.query(`UPDATE kommo_import.sync_state SET cursor=jsonb_set(cursor,ARRAY[$2::text],to_jsonb($3::text))
+    WHERE account_id=$1 AND stream='@source'`,[accountId,'bulk_'+kind,value]);
+}
+async function importLinkGroup(client,account,request,spec,mode) {
+  const ownerKind = spec.linkOwner.kind;
+  const jobs = await client.query(`SELECT stream,cursor->'spec' AS spec FROM kommo_import.sync_state
+    WHERE account_id=$1 AND stream LIKE $2 AND status='pending' AND rows_seen=0
+      AND NOT(cursor ? 'bulkFallback') ORDER BY stream LIMIT 40`,
+    [account.id,'links.'+ownerKind+':%']);
+  if (jobs.rows.length<2) return false;
+  const ids = jobs.rows.map(job=>String(job.spec.linkOwner.id));
+  const params=new URLSearchParams();
+  ids.forEach(id=>params.append('filter[entity_id][]',id));
+  const path=base+ownerKind+'/links?'+params;
+  let grouped;
+  try {
+    grouped=groupedLinks(await request(path),ownerKind,ids);
+    if (grouped && mode!=='verified') {
+      const [sampleId,sampleLinks] = grouped.entries().next().value;
+      const sample = jobs.rows.find(job=>String(job.spec.linkOwner.id)===sampleId);
+      const response = await request(resourcePath(sample.spec,1));
+      const page = unpackPage(sample.spec,response,1);
+      if (page.nextPage || !sameLinks(page.rows,sampleLinks)) grouped=null;
+    }
+  } catch(e) {
+    if (!e.importFormat && ![400,403,404,405,422].includes(e.status)) throw e;
+    grouped=null;
+  }
+  if (!grouped) {
+    if (mode!=='verified') await setBulkMode(client,account.id,ownerKind,'individual');
+    else await client.query(`UPDATE kommo_import.sync_state SET cursor=cursor || '{"bulkFallback":true}'::jsonb
+      WHERE account_id=$1 AND stream=ANY($2::text[])`,[account.id,jobs.rows.map(job=>job.stream)]);
+    return false;
+  }
+  if (mode!=='verified') await setBulkMode(client,account.id,ownerKind,'verified');
+  const records=[],edges=[],counts=[],missing=[];
+  for (const job of jobs.rows) {
+    const links = grouped.get(String(job.spec.linkOwner.id));
+    if (!links) { missing.push(job.stream); continue; }
+    const batch = preparePage(job.spec, links, account);
+    records.push(...batch.records);
+    edges.push(...batch.edges);
+    counts.push({stream:job.stream,n:links.length});
+  }
+  await writePage(client,account.id,{records,edges,streams:[]});
+  await client.query(`UPDATE kommo_import.sync_state s SET status='complete',rows_seen=rows_seen+x.n,
+    updated_at=clock_timestamp() FROM jsonb_to_recordset($2::jsonb) x(stream text,n int)
+    WHERE s.account_id=$1 AND s.stream=x.stream`,[account.id,JSON.stringify(counts)]);
+  if (missing.length) await client.query(`UPDATE kommo_import.sync_state SET cursor=cursor || '{"bulkFallback":true}'::jsonb
+    WHERE account_id=$1 AND stream=ANY($2::text[])`,[account.id,missing]);
+  return true;
+}
 async function onePage(client, account, request) {
   // A single transaction owns the remote request, records, links and cursor. A terminated
   // worker rolls everything back, and a concurrent invocation immediately yields.
   const lock = await client.query('SELECT pg_try_advisory_xact_lock($1::bigint) AS locked',[account.id]);
   if (!lock.rows[0].locked) return false;
+  const source = await client.query(`SELECT cursor FROM kommo_import.sync_state WHERE account_id=$1 AND stream='@source'`,[account.id]);
+  const sourceState = source.rows[0]?.cursor || {};
+  if (Number(sourceState.pauseUntil)>Date.now()) return false;
+  // Probe once early for each owner type, while the core streams are still being imported.
+  for (const kind of entityKinds.filter(k=>!sourceState['bulk_'+k])) {
+    const probe = await client.query(`SELECT cursor->'spec' AS spec FROM kommo_import.sync_state
+      WHERE account_id=$1 AND stream LIKE $2 AND status='pending' ORDER BY stream OFFSET 1 LIMIT 1`,
+    [account.id,'links.'+kind+':%']);
+    if (!probe.rows.length) continue;
+    // A transient server/rate-limit error uses the per-stream retry handling below.
+    sourceState.probe = probe.rows[0].spec.stream;
+    break;
+  }
   const result = await client.query(`SELECT stream,cursor FROM kommo_import.sync_state
     WHERE account_id=$1 AND status IN ('pending','running','retrying')
       AND COALESCE((cursor->>'retryAt')::bigint,0) <= $2
       AND NOT EXISTS(SELECT FROM kommo_import.sync_state WHERE account_id=$1 AND stream='@source'
         AND COALESCE((cursor->>'pauseUntil')::bigint,0)>$2)
-    ORDER BY CASE WHEN stream LIKE 'links.%:%' OR stream LIKE 'file_links:%' OR stream LIKE 'file_versions:%' THEN 2
+    ORDER BY CASE WHEN (stream='talks' AND cursor->>'page'='1') OR (stream LIKE 'messages:%' AND NOT EXISTS (
+          SELECT FROM kommo_import.sync_state WHERE account_id=$1 AND stream='@source' AND cursor->>'messageProbed'='true'
+        )) THEN -1
+        WHEN stream LIKE 'links.%:%' OR stream LIKE 'file_links:%' OR stream LIKE 'file_versions:%' THEN 2
         WHEN stream LIKE 'messages:%' THEN 1 ELSE 0 END, updated_at, stream LIMIT 1`,[account.id,Date.now()]);
   if (!result.rows.length) return false;
-  const {stream,cursor} = result.rows[0];
+  let {stream,cursor} = result.rows[0];
+  if (sourceState.probe) {
+    const probe = await client.query('SELECT stream,cursor FROM kommo_import.sync_state WHERE account_id=$1 AND stream=$2',
+      [account.id,sourceState.probe]);
+    if (probe.rowCount) ({stream,cursor}=probe.rows[0]);
+  }
   const {spec,page} = cursor;
   let next, batch;
   try {
+    if (spec.linkOwner && !cursor.bulkFallback && page===1 && sourceState['bulk_'+spec.linkOwner.kind]!=='individual' &&
+        await importLinkGroup(client,account,request,spec,sourceState['bulk_'+spec.linkOwner.kind])) return true;
     const response = await request(resourcePath(spec,page),spec.host,account);
     const unpacked = unpackPage(spec,response,page);
     next = unpacked.nextPage;
@@ -229,6 +333,9 @@ async function onePage(client, account, request) {
     const signature = createHash('sha256').update(JSON.stringify(batch.records.map(r=>[r.kind,r.source_id]))).digest('hex');
     if (unpacked.rows.length && signature===cursor.previous) invalid('A Kommo repetiu a página anterior.');
     await writePage(client,account.id,batch);
+    if (spec.kind==='messages') await client.query(`UPDATE kommo_import.sync_state SET
+      cursor=cursor || '{"messageProbed":true}'::jsonb WHERE account_id=$1 AND stream='@source'
+      AND NOT (cursor ? 'messageProbed')`,[account.id]);
     await client.query(`UPDATE kommo_import.sync_state SET status=$3,rows_seen=rows_seen+$4,
       cursor=jsonb_build_object('spec',$5::jsonb,'page',$6::int,'previous',$7::text),updated_at=clock_timestamp()
       WHERE account_id=$1 AND stream=$2`,[account.id,stream,next?'running':'complete',
@@ -244,6 +351,17 @@ async function onePage(client, account, request) {
     cursor.error = error.importFormat ? error.message : status ? 'Kommo respondeu HTTP ' + status : 'Falha de comunicação com a Kommo.';
     cursor.attempts = attempts;
     cursor.retryAt = retry ? Date.now()+delay : 0;
+    if (spec.kind==='messages' && error.messageScopeDenied) {
+      cursor.error = 'Kommo requer a permissão External chat history.';
+      await client.query(`UPDATE kommo_import.sync_state SET cursor=cursor ||
+        '{"messageProbed":true,"messageScopeDenied":true}'::jsonb WHERE account_id=$1 AND stream='@source'`,[account.id]);
+      await client.query(`UPDATE kommo_import.sync_state SET status='blocked',updated_at=clock_timestamp(),
+        cursor=jsonb_set(cursor,'{error}',to_jsonb($2::text)) WHERE account_id=$1 AND stream LIKE 'messages:%'
+        AND status IN ('pending','running','retrying')`,[account.id,cursor.error]);
+    } else if (spec.kind==='messages' && !retry) {
+      await client.query(`UPDATE kommo_import.sync_state SET cursor=cursor || '{"messageProbed":true}'::jsonb
+        WHERE account_id=$1 AND stream='@source' AND NOT (cursor ? 'messageProbed')`,[account.id]);
+    }
     if (status===429) await client.query(`UPDATE kommo_import.sync_state SET
       cursor=jsonb_set(cursor,'{pauseUntil}',to_jsonb($2::bigint)) WHERE account_id=$1 AND stream='@source'`,
       [account.id,Date.now()+delay]);
@@ -257,9 +375,14 @@ export async function advanceSync(origin, request, retry) {
   const started = Date.now();
   const account = await loadSource(origin) || await initialize(origin, request);
   const {transaction,query} = await import('./db.mjs');
-  if (retry) await query(`UPDATE kommo_import.sync_state SET status='pending',
-    cursor=cursor-'attempts'-'retryAt'-'error',updated_at=clock_timestamp()
-    WHERE account_id=$1 AND status IN ('blocked','error')`,[account.id]);
+  if (retry) await transaction(async client => {
+    await client.query('SELECT pg_advisory_xact_lock($1::bigint)',[account.id]);
+    await client.query(`UPDATE kommo_import.sync_state SET cursor=cursor-'messageProbed'-'messageScopeDenied'
+      WHERE account_id=$1 AND stream='@source'`,[account.id]);
+    await client.query(`UPDATE kommo_import.sync_state SET status='pending',
+      cursor=cursor-'attempts'-'retryAt'-'error',updated_at=clock_timestamp()
+      WHERE account_id=$1 AND status IN ('blocked','error')`,[account.id]);
+  });
   for (let i=0;i<25 && Date.now()-started<11000;i++) {
     if (!await transaction(client=>onePage(client,account,request))) break;
     await new Promise(resolve=>setTimeout(resolve,180));

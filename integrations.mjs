@@ -1,5 +1,6 @@
 import {randomBytes, createCipheriv, createDecipheriv} from 'node:crypto';
 import {query} from './db.mjs';
+import {missingMessageScope} from './kommo-extended.mjs';
 import {advanceSync, syncStatus} from './kommo-sync.mjs';
 
 const key = Buffer.from(process.env.CRM_ENCRYPTION_KEY || '', 'hex');
@@ -66,6 +67,7 @@ export async function handleIntegration(req, res) {
       let options;
       try { options = JSON.parse(text || '{}'); }
       catch { send(res,400,{error:'JSON inválido'}); return true; }
+      const accessToken = unseal(config.token);
       const read = async (path,host,account) => {
         let target = origin;
         if (host === 'drive') {
@@ -80,13 +82,16 @@ export async function handleIntegration(req, res) {
           target = drive.origin;
         } else if (!path.startsWith('/api/v4/')) throw Error('Rota inválida');
         try {
-          const response = await fetch(target+path,{headers:{Authorization:'Bearer '+unseal(config.token),
+          const response = await fetch(target+path,{headers:{Authorization:'Bearer '+accessToken,
             Accept:'application/json'},redirect:'error',signal:AbortSignal.timeout(9500)});
           if (!response.ok) {
             const after = response.headers.get('retry-after');
             const wait = after && (/^\d+$/.test(after) ? Number(after)*1000 : Date.parse(after)-Date.now());
             await response.body?.cancel();
-            throw Object.assign(Error('Erro da Kommo'),{status:response.status,retryAfterMs:Math.max(0,wait || 0)});
+            const messageScopeDenied = /^\/api\/v4\/talks\/\d+\/messages(?:\?|$)/.test(path) &&
+              missingMessageScope(response.status,response.headers.get('www-authenticate'),accessToken);
+            throw Object.assign(Error('Erro da Kommo'),{status:response.status,
+              retryAfterMs:Math.max(0,wait || 0),messageScopeDenied});
           }
           return response.status===204 ? null : await response.json();
         } catch (e) { e.remote=true; throw e; }
