@@ -810,3 +810,42 @@
 .linked-contact dt,.linked-contact p { color: var(--muted); }
 .linked-contact dd { margin: 0; overflow-wrap: anywhere; }
 .linked-contact { font-size: 13px; }
+
+.kommo-import {
+  border-top: 1px solid var(--line);
+  margin-top: 18px;
+  padding-top: 17px;
+}
+.kommo-import h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+.kommo-import p {
+  margin: 6px 0 12px;
+  color: var(--muted);
+  font-size: .875rem;
+}
+.kommo-import summary {
+  color: var(--ink);
+  cursor: pointer;
+  font-size: .875rem;
+  font-weight: 600;
+}
+.kommo-import table {
+  width: 100%;
+  margin-block: 10px;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: .8rem;
+  font-variant-numeric: tabular-nums;
+}
+.kommo-import :is(th, td) {
+  border-bottom: 1px solid var(--line);
+  padding: 7px 4px;
+  overflow-wrap: anywhere;
+  text-align: start;
+  vertical-align: top;
+}
+.kommo-import :is(th, td):nth-child(2) { width: 19%; text-align: end; }
+.kommo-import td small { display: block; color: var(--muted); }
+#content .kommo-import .integration-actions { margin-top: 12px; }

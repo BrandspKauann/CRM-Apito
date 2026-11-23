@@ -165,6 +165,7 @@ function mountLinkPicker(key, id) {
 }
 
 function showLogin(message = '') {
+  KommoImport.endSession();
   data = undefined;
   directory = undefined;
   if ($('dialog').open) $('dialog').close();
@@ -515,8 +516,10 @@ async function drawIntegrations() {
           '">Testar conexão</button><button type="submit">Salvar conexão</button>' +
           (connected ? '<button type="button" data-preview="' + id + '">Consultar dados</button>' : '') +
           '</div></form><p class="integration-feedback" role="status"></p>' +
+          (id === 'kommo' ? '<div id="kommo-import-panel"></div>' : '') +
           '<div class="integration-preview"></div></article>';
       }).join('') + '</div>';
+    if (settings.kommo.connected) KommoImport.mount($('#kommo-import-panel'));
   } catch (error) {
     if (page === 'integrations') $('#content').innerHTML =
       '<p class="loading-state" role="alert">' + esc(error.message) + '</p>';
@@ -547,6 +550,7 @@ async function integrationRequest(formElement, card, action) {
         formElement.querySelector('.integration-actions').insertAdjacentHTML('beforeend',
           '<button type="button" data-preview="' + provider + '">Consultar dados</button>');
       }
+      if (provider === 'kommo') KommoImport.mount($('#kommo-import-panel'));
       await showPreview(provider, card);
     }
   } catch (error) {
@@ -642,6 +646,7 @@ async function refresh() {
   data = await response.json();
   directory = buildDirectory(data);
   draw();
+  KommoImport.resume();
 }
 $('nav').onclick = event => {
   const button = event.target.closest('[data-page]');

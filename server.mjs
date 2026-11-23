@@ -21,6 +21,7 @@ const assets = {
   '/relationships.css': ['relationships.css', 'text/css'],
   '/directory.css': ['directory.css', 'text/css'],
   '/relationships.js': ['relationships.js', 'text/javascript'],
+  '/kommo-import.js': ['kommo-import.js', 'text/javascript'],
   '/stage-art.svg': ['stage-art.svg', 'image/svg+xml'],
   '/app.js': ['app.js', 'text/javascript'],
 };

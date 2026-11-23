@@ -1,5 +1,6 @@
 import {randomBytes, createCipheriv, createDecipheriv} from 'node:crypto';
 import {query} from './db.mjs';
+import {advanceSync, syncStatus} from './kommo-sync.mjs';
 
 const key = Buffer.from(process.env.CRM_ENCRYPTION_KEY || '', 'hex');
 if (key.length !== 32 || !/^[a-f0-9]{64}$/i.test(process.env.CRM_ENCRYPTION_KEY || '')) {
@@ -46,6 +47,56 @@ async function request(provider, config, path) {
   return response.status === 204 ? {} : response.json();
 }
 export async function handleIntegration(req, res) {
+  if (req.url === '/api/integrations/kommo/sync') {
+    try {
+      if (!['GET','POST'].includes(req.method)) { send(res,405,{error:'Método inválido'}); return true; }
+      const config = await getConfig('kommo');
+      if (!config) { send(res,409,{error:'Configure primeiro a integração da Kommo.'}); return true; }
+      const origin = validUrl('kommo',config.baseUrl);
+      if (req.method === 'GET') { send(res,200,await syncStatus(origin)); return true; }
+      if (!req.headers['content-type']?.startsWith('application/json') ||
+          (req.headers.origin && new URL(req.headers.origin).host !== req.headers.host)) {
+        send(res,403,{error:'Origem ou formato inválido'}); return true;
+      }
+      let text = '';
+      for await (const chunk of req) {
+        text += chunk.toString();
+        if (text.length>512) { send(res,413,{error:'Corpo muito grande'}); return true; }
+      }
+      let options;
+      try { options = JSON.parse(text || '{}'); }
+      catch { send(res,400,{error:'JSON inválido'}); return true; }
+      const read = async (path,host,account) => {
+        let target = origin;
+        if (host === 'drive') {
+          const raw = account?.drive_url;
+          let drive;
+          try { drive = new URL(raw); } catch {}
+          // Only forward the account credential to an authenticated Kommo-owned drive.
+          if (!drive || drive.protocol!=='https:' || !drive.hostname.endsWith('.kommo.com') ||
+            drive.port || drive.username || drive.password || !path.startsWith('/v1.0/')) {
+            throw Object.assign(Error('Drive indisponível'),{remote:true,status:403});
+          }
+          target = drive.origin;
+        } else if (!path.startsWith('/api/v4/')) throw Error('Rota inválida');
+        try {
+          const response = await fetch(target+path,{headers:{Authorization:'Bearer '+unseal(config.token),
+            Accept:'application/json'},redirect:'error',signal:AbortSignal.timeout(9500)});
+          if (!response.ok) {
+            const after = response.headers.get('retry-after');
+            const wait = after && (/^\d+$/.test(after) ? Number(after)*1000 : Date.parse(after)-Date.now());
+            await response.body?.cancel();
+            throw Object.assign(Error('Erro da Kommo'),{status:response.status,retryAfterMs:Math.max(0,wait || 0)});
+          }
+          return response.status===204 ? null : await response.json();
+        } catch (e) { e.remote=true; throw e; }
+      };
+      send(res,200,await advanceSync(origin,read,options?.retry===true));
+    } catch (e) {
+      send(res,503,{error:e.remote ? 'Não foi possível consultar a conta na Kommo.' : 'Não foi possível atualizar a importação no banco.'});
+    }
+    return true;
+  }
   const route = /^\/api\/integrations(?:\/(kommo|meeventos)(?:\/(test|preview))?)?$/.exec(req.url);
   if (!route) return false;
   const [, provider, action] = route;

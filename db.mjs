@@ -15,4 +15,18 @@ const pool = new Pool({
 pool.on('error', error => console.error('Conexão PostgreSQL encerrada:', error.code || error.name));
 
 export const query = (sql, parameters = []) => pool.query(sql, parameters);
+export async function transaction(operation) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await operation(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
 export const closeDatabase = () => pool.end();
