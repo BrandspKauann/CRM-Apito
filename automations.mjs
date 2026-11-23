@@ -8,7 +8,8 @@ function prepare() {
   ready ??= readFile(new URL('./migrations/automations.sql', import.meta.url),'utf8')
     .then(sql => transaction(async client => {
       await client.query("SELECT pg_advisory_xact_lock(hashtext('crm-apito-automation-setup'))");
-      await client.query(sql);
+      // The VPS web role uses migrations applied before deployment.
+      if (!process.env.CRM_VPS_CONNECTION) await client.query(sql);
       await client.query(`INSERT INTO automation_rules(template_key,name,event,message,subject,action)
         SELECT key,name,event,message,'Próxima ação','followup'
         FROM jsonb_to_recordset($1::jsonb) AS template(key text,name text,event text,message text)
