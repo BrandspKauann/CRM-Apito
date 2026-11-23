@@ -11,9 +11,28 @@ const localEvents = `
        WHEN 'Perdido' THEN 'lost' WHEN 'Orçamento aprovado' THEN 'approved' END)
   ) e(kind) WHERE d.contact IS NOT NULL AND e.kind IS NOT NULL`;
 
+// Keep saved lists available on installations where the application role cannot create tables.
+const listMarker = 'crm-apito/contact-segment/v1';
+const storedLists = `SELECT 'lo-' || m.oid AS id,
+  convert_from(lo_get(m.oid),'UTF8')::jsonb AS data
+  FROM pg_largeobject_metadata m JOIN pg_description d ON d.objoid=m.oid
+  AND d.classoid='pg_largeobject'::regclass AND d.objsubid=0
+  WHERE m.lomowner=current_user::regrole AND d.description=$1`;
+
+async function loadLists(execute, hasTable) {
+  const objects = await execute(storedLists,[listMarker]);
+  const lists = objects.rows.map(({id,data})=>({id,name:data.name,criteria:data.criteria}));
+  if (hasTable) lists.push(...(await execute('SELECT id,name,criteria FROM public.contact_segments')).rows);
+  return lists.sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));
+}
+
 export async function segmentData() {
-  const lists = await query('SELECT id,name,criteria FROM contact_segments ORDER BY name');
-  const local = await query(localEvents);
+  const {rows:[schema]} = await query("SELECT to_regclass('public.contact_segments') IS NOT NULL AS lists, to_regclass('public.deal_stage_history') IS NOT NULL AS history");
+  const lists = await loadLists(query,schema.lists);
+  const historySource = schema.history ? localEvents : localEvents.replace(
+    'LEFT JOIN deal_stage_history h ON h.deal_id=d.id',
+    'CROSS JOIN (SELECT NULL::bigint AS id,NULL::boolean AS created,NULL::text AS stage,NULL::timestamptz AS occurred_at) h');
+  const local = await query(historySource);
   const imported = await transaction(async client => {
     const sources = await client.query("SELECT to_regclass('crm_enrichment.meeventos_crosswalk') IS NOT NULL AND to_regclass('kommo_import.records') IS NOT NULL AND to_regclass('crm_enrichment.crm_contact_sources') IS NOT NULL AS available");
     if (!sources.rows[0].available) return [];
@@ -21,7 +40,7 @@ export async function segmentData() {
     await client.query('SET LOCAL jit=off');
     return (await client.query(segmentHistorySql)).rows;
   });
-  return {lists:lists.rows,events:[...local.rows,...imported]};
+  return {lists,events:[...local.rows,...imported]};
 }
 
 export function validSegment(body) {
@@ -42,6 +61,21 @@ export function validSegment(body) {
 }
 
 export async function saveSegment(body) {
-  return (await query('INSERT INTO contact_segments(name,criteria) VALUES($1,$2) RETURNING id,name,criteria',
-    [body.name.trim(),body.criteria])).rows[0];
+  return transaction(async client => {
+    const execute = client.query.bind(client);
+    await execute("SELECT pg_advisory_xact_lock(hashtext('crm-apito/contact-segments'))");
+    const name=body.name.trim();
+    const {rows:[schema]}=await execute("SELECT to_regclass('public.contact_segments') IS NOT NULL AS available");
+    const lists=await loadLists(execute,schema.available);
+    if (lists.some(list=>list.name===name)) throw Object.assign(Error('Lista já existente.'),{code:'23505'});
+    if (schema.available) return (await execute(
+      'INSERT INTO public.contact_segments(name,criteria) VALUES($1,$2) RETURNING id,name,criteria',
+      [name,body.criteria])).rows[0];
+    const {rows:[row]}=await execute("SELECT lo_from_bytea(0,$1::bytea) AS oid",
+      [Buffer.from(JSON.stringify({name,criteria:body.criteria}))]);
+    const oid=Number(row.oid);
+    if (!Number.isSafeInteger(oid) || oid<1 || oid>4294967295) throw Error('OID inválido');
+    await execute(`COMMENT ON LARGE OBJECT ${oid} IS '${listMarker}'`);
+    return {id:'lo-'+oid,name,criteria:body.criteria};
+  });
 }
