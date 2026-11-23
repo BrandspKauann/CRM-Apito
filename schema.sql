@@ -21,6 +21,10 @@ CREATE TABLE IF NOT EXISTS deals (
   notes TEXT NOT NULL
 );
 
+ALTER TABLE deals
+  ADD COLUMN IF NOT EXISTS next_action TEXT NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS follow_up_on DATE;
+
 CREATE TABLE IF NOT EXISTS integration_configs (
   provider TEXT PRIMARY KEY CHECK (provider IN ('kommo', 'meeventos')),
   base_url TEXT NOT NULL,

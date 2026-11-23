@@ -1,0 +1,78 @@
+#pipeline-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 12px;
+  min-width: 0;
+  margin: 0 0 17px;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+}
+#pipeline-filters label { position: relative; display: inline-flex; cursor: pointer; }
+#pipeline-filters input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+}
+#pipeline-filters label > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 42px;
+  padding: 5px 3px;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+#pipeline-filters b {
+  min-width: 20px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: #ece8e4;
+  font-size: 11px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+#pipeline-filters input:checked + span { border-color: var(--accent); color: var(--ink); }
+#pipeline-filters input:checked + span b { background: #f3dce0; color: #762332; }
+#pipeline-filters input:focus-visible + span { outline: 2px solid #3976b2; outline-offset: 1px; }
+#content .deal-card { align-items: stretch; gap: 6px; text-align: left; }
+#content .deal-card-top strong, #content .deal-card-contact, #content .followup-action {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+#content .deal-card-bottom { padding: 0; border: 0; }
+#content .deal-followup {
+  display: grid;
+  gap: 4px;
+  margin-top: 3px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+}
+#content .followup-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+#content .followup-overdue { color: #a01d37; }
+#content .followup-today { color: #855005; }
+#content .followup-future { color: #326554; }
+#content .followup-action {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.45;
+}
+@media (max-width: 650px) {
+  #pipeline-filters { gap: 0 8px; }
+}

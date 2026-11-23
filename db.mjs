@@ -1,4 +1,7 @@
-import { Pool } from 'pg';
+import { Pool, types } from 'pg';
+
+// DATE is a calendar day. Keep it independent of the server and browser time zones.
+types.setTypeParser(types.builtins.DATE, value => value);
 
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL não configurada');
 

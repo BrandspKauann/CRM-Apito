@@ -10,12 +10,12 @@ const singular = { companies: 'empresa', contacts: 'contato', deals: 'negócio' 
 const labels = {
   name: 'Nome', city: 'Cidade', email: 'E-mail', phone: 'Telefone',
   company: 'Empresa', amount: 'Valor (R$)', contact: 'Contato',
-  stage: 'Etapa', notes: 'Observações'
+  stage: 'Etapa', notes: 'Observações', next_action: 'Próxima ação', follow_up_on: 'Data de acompanhamento'
 };
 const keys = {
   companies: ['name', 'city'],
   contacts: ['name', 'company', 'email', 'phone'],
-  deals: ['name', 'contact', 'amount', 'stage', 'notes']
+  deals: ['name', 'contact', 'amount', 'stage', 'next_action', 'follow_up_on', 'notes']
 };
 const iconPaths = {
   home: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
@@ -51,9 +51,122 @@ const money = amount => Number(amount || 0).toLocaleString('pt-BR', { style: 'cu
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 let page = 'home', data, editing, search = '';
+const directoryPageSize = 50;
+let directoryPage = 1, directoryFilter = '', directory;
+
+function normalizeSearch(value) {
+  return String(value ?? '').normalize('NFD').replace(/\p{M}/gu, '').toLocaleLowerCase('pt-BR').trim();
+}
+function buildDirectory(records) {
+  const companies = new Map(records.companies.map(row => [row.id, row]));
+  const contacts = new Map(records.contacts.map(row => [row.id, row]));
+  const contactCounts = new Map();
+  const entries = new Map();
+  for (const row of records.contacts) {
+    if (row.company != null) contactCounts.set(row.company, (contactCounts.get(row.company) || 0) + 1);
+    const company = companies.get(row.company);
+    entries.set(row, {
+      text: normalizeSearch([row.name, company?.name, row.email, row.phone].filter(Boolean).join(' ')),
+      digits: String(row.phone || '').replace(/\D/g, '')
+    });
+  }
+  for (const row of records.companies) {
+    entries.set(row, { text: normalizeSearch([row.name, row.city].filter(Boolean).join(' ')), digits: '' });
+  }
+  return { companies, contacts, contactCounts, entries };
+}
+
+const directoryFilters = {
+  contacts: [['', 'Todos os contatos'], ['phone', 'Com telefone'], ['email', 'Com e-mail'],
+    ['missingEmail', 'Sem e-mail'], ['withoutCompany', 'Sem empresa vinculada']],
+  companies: [['', 'Todas as empresas'], ['hasContacts', 'Com contatos vinculados'],
+    ['noContacts', 'Sem contatos vinculados']]
+};
+function directoryMatch(query) {
+  const term = normalizeSearch(query);
+  const digits = /^[+\d\s().-]+$/.test(term) ? term.replace(/\D/g, '') : '';
+  return row => {
+    const entry = directory.entries.get(row);
+    return entry.text.includes(term) || Boolean(digits && entry.digits.includes(digits));
+  };
+}
+function directoryRows() {
+  const matches = directoryMatch(search);
+  return data[page].filter(row => {
+    if (!matches(row)) return false;
+    switch (directoryFilter) {
+      case 'phone': return Boolean(row.phone?.trim());
+      case 'email': return Boolean(row.email?.trim());
+      case 'missingEmail': return !row.email?.trim();
+      case 'withoutCompany': return row.company == null;
+      case 'hasContacts': return directory.contactCounts.has(row.id);
+      case 'noContacts': return !directory.contactCounts.has(row.id);
+      default: return true;
+    }
+  });
+}
+function mountDirectoryFilter() {
+  const searchBox = $('.search-box');
+  $('#search').placeholder = page === 'contacts' ? 'Nome, empresa, e-mail ou telefone' : 'Nome ou cidade';
+  searchBox.insertAdjacentHTML('afterend', '<label class="directory-filter"><span class="sr-only">Filtrar ' +
+    pages[page].toLowerCase() + '</span><select id="directory-filter">' +
+    directoryFilters[page].map(([value, label]) => '<option value="' + value + '">' + label + '</option>').join('') +
+    '</select></label>');
+  const select = $('#directory-filter');
+  select.value = directoryFilter;
+  select.onchange = () => { directoryFilter = select.value; directoryPage = 1; renderRows(); };
+}
+function directoryPager(start, end, total) {
+  if (total <= directoryPageSize) return '';
+  return '<div class="directory-pager" role="group" aria-label="Paginação">' +
+    '<span aria-live="polite">' + (start + 1) + '–' + end + ' de ' + total.toLocaleString('pt-BR') + '</span>' +
+    '<button type="button" data-directory-step="-1"' + (start === 0 ? ' disabled' : '') + '>Anterior</button>' +
+    '<button type="button" data-directory-step="1"' + (end === total ? ' disabled' : '') + '>Próxima</button></div>';
+}
+
+function mountLinkPicker(key, id) {
+  const table = key === 'contact' ? 'contacts' : 'companies';
+  const records = data[table];
+  const select = $('#fields select[name="' + key + '"]');
+  const label = select.closest('label');
+  const status = document.createElement('small');
+  status.className = 'link-picker-count';
+  status.setAttribute('aria-live', 'polite');
+  let selected = directory[table].get(id);
+  function fill(query) {
+    const matches = query.trim() ? records.filter(directoryMatch(query)) : records;
+    const options = matches.slice(0, directoryPageSize);
+    if (selected && !options.includes(selected)) options.unshift(selected);
+    select.replaceChildren(new Option('Sem vínculo', ''));
+    for (const row of options) {
+      const detail = table === 'contacts' ? [linked('companies', row.company), row.phone || row.email] : [row.city];
+      const title = [row.name, ...detail].filter(Boolean).join(' · ');
+      select.add(new Option(title, String(row.id), false, row === selected));
+    }
+    status.textContent = matches.length > directoryPageSize
+      ? 'Exibindo os primeiros ' + directoryPageSize + ' de ' + matches.length.toLocaleString('pt-BR') + '. Refine a busca.'
+      : matches.length ? '' : 'Nenhum resultado para esta busca.';
+  }
+  if (records.length > directoryPageSize) {
+    const filterLabel = document.createElement('label');
+    filterLabel.textContent = key === 'contact' ? 'Buscar contato para vincular' : 'Buscar empresa para vincular';
+    const input = document.createElement('input');
+    input.type = 'search';
+    input.placeholder = key === 'contact' ? 'Nome, e-mail ou telefone' : 'Nome ou cidade';
+    input.addEventListener('input', () => {
+      selected = directory[table].get(Number(select.value));
+      fill(input.value);
+    });
+    input.addEventListener('keydown', event => { if (event.key === 'Enter') event.preventDefault(); });
+    filterLabel.append(input, status);
+    label.before(filterLabel);
+  }
+  fill('');
+}
 
 function showLogin(message = '') {
   data = undefined;
+  directory = undefined;
   if ($('dialog').open) $('dialog').close();
   $('.frame').hidden = true;
   $('#login-screen').hidden = false;
@@ -118,14 +231,18 @@ $('#logout').onclick = async () => {
 };
 
 function linked(table, id) {
-  return data[table].find(row => row.id === id)?.name || '';
+  return directory[table].get(id)?.name || '';
+}
+function dealContactLabel(deal) {
+  const contact = directory.contacts.get(deal.contact);
+  return contact ? [contact.name, linked('companies', contact.company)].filter(Boolean).join(' · ') : '';
 }
 function summary(row, table) {
   if (table === 'companies') return row.city || 'Cidade não informada';
   if (table === 'contacts') {
     return [linked('companies', row.company), row.email, row.phone].filter(Boolean).join(' · ');
   }
-  return [linked('contacts', row.contact), money(row.amount)].filter(Boolean).join(' · ');
+  return [dealContactLabel(row), money(row.amount)].filter(Boolean).join(' · ');
 }
 function initials(value) {
   return String(value || '?').trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toLocaleUpperCase('pt-BR');
@@ -139,13 +256,60 @@ function stageTone(stage) {
 function stagePill(stage) {
   return '<span class="stage-pill ' + stageTone(stage) + '">' + esc(stage) + '</span>';
 }
-function recordButton(row, table, variant = '') {
+const followUpFilters = {
+  all: 'Todos', overdue: 'Em atraso', today: 'Hoje', unscheduled: 'Sem data', future: 'Futuros'
+};
+const followUpOrder = { overdue: 0, today: 1, unscheduled: 2, future: 3, closed: 4 };
+const dayFormatter = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'UTC' });
+let pipelineFocus = 'all';
+
+function localCalendarDay() {
+  const now = new Date();
+  return [now.getFullYear(), String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0')].join('-');
+}
+function followUpStatus(row, today) {
+  if (row.stage === 'Ganho' || row.stage === 'Perdido') return 'closed';
+  if (!row.follow_up_on) return 'unscheduled';
+  if (row.follow_up_on < today) return 'overdue';
+  return row.follow_up_on === today ? 'today' : 'future';
+}
+function followUpLine(row, status) {
+  if (status === 'closed') return '';
+  const date = row.follow_up_on ? dayFormatter.format(new Date(row.follow_up_on + 'T00:00:00Z')) : '';
+  const statusText = { overdue: 'Em atraso · ' + date, today: 'Hoje', future: 'Agendado · ' + date, unscheduled: 'Sem data' };
+  return '<span class="deal-followup"><span class="followup-state followup-' + status + '">' +
+    icon('calendar', 14) + statusText[status] + '</span>' +
+    (row.next_action ? '<span class="followup-action">' + esc(row.next_action) + '</span>' : '') + '</span>';
+}
+function renderPipelineFilters(board, counts) {
+  let filters = $('#pipeline-filters');
+  if (!filters) {
+    filters = document.createElement('fieldset');
+    filters.id = 'pipeline-filters';
+    filters.innerHTML = '<legend class="sr-only">Filtrar por acompanhamento</legend>' +
+      Object.entries(followUpFilters).map(([value, label]) =>
+        '<label><input type="radio" name="pipeline-focus" value="' + value + '">' +
+        '<span>' + label + ' <b data-count></b></span></label>').join('');
+    board.before(filters);
+    filters.onchange = event => {
+      pipelineFocus = event.target.value;
+      renderRows();
+    };
+  }
+  for (const radio of filters.querySelectorAll('input')) {
+    radio.checked = radio.value === pipelineFocus;
+    radio.parentElement.querySelector('[data-count]').textContent = counts[radio.value];
+  }
+}
+function recordButton(row, table, variant = '', status) {
   const target = 'type="button" data-table="' + table + '" data-id="' + esc(row.id) + '"';
   if (variant === 'deal') {
     return '<button ' + target + ' class="record deal-card"><span class="deal-card-top">' +
       '<strong>' + esc(row.name) + '</strong>' + icon('chevron', 16) + '</span>' +
-      '<span class="deal-card-contact">' + esc(linked('contacts', row.contact) || 'Sem contato vinculado') +
-      '</span><span class="deal-card-bottom"><b>' + money(row.amount) + '</b></span></button>';
+      '<span class="deal-card-contact">' + esc(dealContactLabel(row) || 'Sem contato vinculado') +
+      '</span><span class="deal-card-bottom"><b>' + money(row.amount) + '</b></span>' +
+      followUpLine(row, status) + '</button>';
   }
   if (variant === 'recent') {
     return '<button ' + target + ' class="record recent-row"><span class="recent-row-copy"><strong>' +
@@ -154,7 +318,7 @@ function recordButton(row, table, variant = '') {
       stagePill(row.stage) + '</span></button>';
   }
   if (variant === 'company') {
-    const contacts = data.contacts.filter(contact => contact.company === row.id).length;
+    const contacts = directory.contactCounts.get(row.id) || 0;
     return '<button ' + target + ' class="record company-row"><span class="company-mark">' +
       esc(initials(row.name)) + '</span><span class="company-row-name"><strong>' + esc(row.name) +
       '</strong><small>' + esc(row.city || 'Cidade não informada') + '</small></span>' +
@@ -181,29 +345,45 @@ function sectionHeading(kicker, title, target, linkText) {
       linkText + ' ' + icon('arrow', 16) + '</button>' : '') + '</div>';
 }
 function renderRows() {
-  const rows = data[page].filter(row => (row.name + ' ' + summary(row, page))
-    .toLocaleLowerCase('pt-BR').includes(search.toLocaleLowerCase('pt-BR')));
+  const term = normalizeSearch(search);
+  const rows = page === 'deals' ? data.deals.filter(row => !term || normalizeSearch(
+    [row.name, row.stage, row.next_action, summary(row, page)].join(' ')).includes(term)) : directoryRows();
   const target = $('#rows');
   if (page === 'deals') {
+    const today = localCalendarDay();
+    const counts = { all: rows.length, overdue: 0, today: 0, unscheduled: 0, future: 0 };
+    const byStage = new Map(data.stages.map(stage => [stage, []]));
+    for (const row of rows) {
+      const status = followUpStatus(row, today);
+      if (status !== 'closed') counts[status]++;
+      if (pipelineFocus === 'all' || pipelineFocus === status) byStage.get(row.stage)?.push({ row, status });
+    }
+    renderPipelineFilters(target, counts);
     target.innerHTML = data.stages.map(stage => {
-      const current = rows.filter(row => row.stage === stage);
-      const total = current.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+      const current = byStage.get(stage).sort((a, b) => followUpOrder[a.status] - followUpOrder[b.status] ||
+        String(a.row.follow_up_on || '').localeCompare(String(b.row.follow_up_on || '')) || b.row.id - a.row.id);
+      const total = current.reduce((sum, item) => sum + Number(item.row.amount || 0), 0);
       return '<article class="stage-column" data-stage="' + esc(stage) + '"><div class="stage-column-header"><div class="stage-column-title">' +
         '<span class="stage-dot ' + stageTone(stage) + '"></span><h2>' + esc(stage) +
         '</h2><span class="stage-count">' + current.length + '</span></div><small>' + money(total) +
         '</small></div><div class="stage-column-body">' +
-        (current.map(row => recordButton(row, 'deals', 'deal')).join('') ||
-          '<p class="stage-empty">Nenhum negócio nesta etapa.</p>') + '</div></article>';
+        (current.map(({ row, status }) => recordButton(row, 'deals', 'deal', status)).join('') ||
+          '<p class="stage-empty">' + (search || pipelineFocus !== 'all' ? 'Nenhum resultado nesta etapa.' : 'Nenhum negócio nesta etapa.') +
+          '</p>') + '</div></article>';
     }).join('');
     return;
   }
-  target.innerHTML = '<article class="collection-card">' +
+  directoryPage = Math.max(1, Math.min(directoryPage, Math.ceil(rows.length / directoryPageSize)));
+  const start = (directoryPage - 1) * directoryPageSize;
+  const end = Math.min(start + directoryPageSize, rows.length);
+  const filtered = Boolean(search.trim() || directoryFilter);
+  target.innerHTML = '<article class="collection-card" tabindex="-1" aria-label="' + pages[page] + '">' +
     sectionHeading('', pages[page] + ' <span class="collection-count">' +
-      rows.length + '</span>') +
-    (rows.map(row => recordButton(row, page)).join('') ||
-      emptyState(search ? 'Nenhum resultado encontrado' : 'Sua base começa aqui',
-        search ? 'Experimente outro termo na busca.' : 'Cadastre o primeiro registro para começar.', search ? '' : page)) +
-    '</article>';
+      rows.length.toLocaleString('pt-BR') + '</span>') +
+    (rows.slice(start, end).map(row => recordButton(row, page)).join('') ||
+      emptyState(filtered ? 'Nenhum resultado encontrado' : 'Sua base começa aqui',
+        filtered ? 'Ajuste o filtro ou tente outra busca.' : 'Cadastre o primeiro registro para começar.', filtered ? '' : page)) +
+    directoryPager(start, end, rows.length) + '</article>';
 }
 function drawHome() {
   const open = data.deals.filter(row => !['Ganho', 'Perdido'].includes(row.stage));
@@ -290,13 +470,16 @@ function draw() {
     data[page].length + ' ' + (data[page].length === 1 ? 'registro' : 'registros') +
     ' na sua base</span></div><div id="rows" class="' +
     (page === 'deals' ? 'board' : 'list') + '"></div>';
+  if (directoryFilters[page]) mountDirectoryFilter();
   $('#search').value = search;
-  $('#search').oninput = event => { search = event.target.value; renderRows(); };
+  $('#search').oninput = event => { search = event.target.value; directoryPage = 1; renderRows(); };
   renderRows();
 }
 function changePage(next) {
   if (!pages[next]) return;
   page = next;
+  directoryPage = 1;
+  directoryFilter = '';
   search = '';
   draw();
   window.scrollTo(0, 0);
@@ -391,23 +574,25 @@ async function showPreview(provider, card) {
     feedback.textContent = error.message || 'Falha na consulta.';
   }
 }
-function form(table, id) {
+function form(table, id, trail = []) {
   const row = data[table].find(item => item.id === id) || {};
   editing = { table, id };
   $('#modalTitle').textContent = (id ? 'Editar ' : table === 'companies' ? 'Nova ' : 'Novo ') +
     singular[table];
   $('#fields').innerHTML = keys[table].map(key => {
     let input;
-    if (['contact', 'company', 'stage'].includes(key)) {
-      const options = key === 'stage' ? data.stages.map(stage => [stage, stage]) :
-        [['', 'Sem vínculo'], ...data[key === 'contact' ? 'contacts' : 'companies']
-          .map(item => [item.id, item.name])];
-      input = '<select name="' + key + '">' + options.map(([value, title]) =>
-        '<option value="' + esc(value) + '" ' +
-        (String(value) === String(row[key]) ? 'selected' : '') + '>' +
-        esc(title) + '</option>').join('') + '</select>';
+    if (key === 'contact' || key === 'company') {
+      input = '<select name="' + key + '"></select>';
+    } else if (key === 'stage') {
+      input = '<select name="stage">' + data.stages.map(stage =>
+        '<option ' + (stage === row.stage ? 'selected' : '') + '>' + esc(stage) + '</option>'
+      ).join('') + '</select>';
     } else if (key === 'notes') {
       input = '<textarea name="notes">' + esc(row.notes) + '</textarea>';
+    } else if (key === 'next_action') {
+      input = '<input name="next_action" maxlength="200" value="' + esc(row.next_action) + '">';
+    } else if (key === 'follow_up_on') {
+      input = '<input type="date" name="follow_up_on" min="0001-01-01" max="9999-12-31" value="' + esc(row.follow_up_on) + '">';
     } else {
       input = '<input name="' + key + '" ' +
         (key === 'name' ? 'required maxlength="200"' : '') + ' type="' +
@@ -418,6 +603,8 @@ function form(table, id) {
     }
     return '<label>' + labels[key] + input + '</label>';
   }).join('');
+  if (table === 'contacts') mountLinkPicker('company', row.company);
+  if (table === 'deals') mountLinkPicker('contact', row.contact);
   if (table === 'deals') {
     const contactSelect = $('#fields select[name="contact"]');
     const details = document.createElement('section');
@@ -438,12 +625,22 @@ function form(table, id) {
     if (id) $('#modalTitle').textContent = row.name;
   }
   $('#error').textContent = '';
-  $('dialog').showModal();
+  RecordRelationships.mount(table, row, data, trail, form);
+  const dialog = $('dialog');
+  if (dialog.open) {
+    dialog.scrollTop = 0;
+    const title = $('#modalTitle');
+    title.tabIndex = -1;
+    title.focus();
+  } else {
+    dialog.showModal();
+  }
 }
 async function refresh() {
   const response = await apiFetch('/api/crm');
   if (!response.ok) throw Error('Falha ao carregar o CRM.');
   data = await response.json();
+  directory = buildDirectory(data);
   draw();
 }
 $('nav').onclick = event => {
@@ -512,6 +709,15 @@ content.addEventListener('pointerup', async event => {
   } finally { movesInProgress.delete(deal.id); }
 });
 $('#content').addEventListener('click', async event => {
+  const step = event.target.closest('[data-directory-step]');
+  if (step && directoryFilters[page]) {
+    directoryPage += Number(step.dataset.directoryStep);
+    renderRows();
+    const collection = $('.collection-card');
+    collection.focus({ preventScroll: true });
+    collection.scrollIntoView({ block: 'start' });
+    return;
+  }
   const link = event.target.closest('[data-go]');
   if (link) { changePage(link.dataset.go); return; }
   const add = event.target.closest('[data-new]');

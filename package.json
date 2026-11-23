@@ -4,8 +4,8 @@
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
-    "check": "node --check server.mjs && node --check integrations.mjs && node --check auth.mjs && node --check db.mjs && node --check public/app.js",
-    "test": "node tests/auth.test.mjs"
+    "check": "node --check server.mjs && node --check integrations.mjs && node --check auth.mjs && node --check db.mjs && node --check follow-up.mjs && node --check public/relationships.js && node --check public/app.js",
+    "test": "node tests/auth.test.mjs && node tests/follow-up.test.mjs"
   },
   "dependencies": {
     "pg": "^8.15.0"

@@ -1,0 +1,75 @@
+#fields .link-picker-count {
+  display: block;
+  color: var(--muted);
+  font-size: .75rem;
+  font-weight: 400;
+}
+#fields .link-picker-count:empty {
+  display: none;
+}
+#content .records-toolbar:has(.directory-filter) {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 10px;
+}
+#content .directory-filter {
+  margin: 0;
+}
+#content .directory-filter select {
+  min-height: 46px;
+  width: auto;
+  margin: 0;
+  padding-inline: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background-color: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: .875rem;
+}
+#content .directory-filter + .records-hint {
+  margin-inline-start: auto;
+}
+#content .directory-pager {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 15px clamp(12px, 3vw, 24px);
+  border-top: 1px solid var(--line);
+}
+#content .directory-pager span {
+  margin-inline-end: auto;
+  color: var(--muted);
+  font-size: .8125rem;
+  font-variant-numeric: tabular-nums;
+}
+#content .directory-pager button {
+  min-height: 38px;
+  padding-inline: 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: .8125rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+#content .directory-pager button:hover:enabled {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+#content .directory-pager button:disabled {
+  color: var(--muted);
+  opacity: .55;
+  cursor: default;
+}
+@media (max-width: 600px) {
+  #content .records-toolbar:has(.directory-filter) {
+    flex-direction: row;
+    align-items: center;
+  }
+  #content .records-toolbar:has(.directory-filter) .search-box {
+    flex-basis: 100%;
+  }
+}

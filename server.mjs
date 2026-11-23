@@ -5,17 +5,22 @@ import {resolve} from 'node:path';
 import {query} from './db.mjs';
 import {handleAuth, requireAuth} from './auth.mjs';
 import {handleIntegration} from './integrations.mjs';
+import {followUpError, writableFields} from './follow-up.mjs';
 
 const fields = {
   companies: ['name', 'city'],
   contacts: ['name', 'company', 'email', 'phone'],
-  deals: ['name', 'contact', 'amount', 'stage', 'notes'],
+  deals: ['name', 'contact', 'amount', 'stage', 'notes', 'next_action', 'follow_up_on'],
 };
 const assets = {
   '/': ['index.html', 'text/html'],
   '/style.css': ['style.css', 'text/css'],
   '/auth.css': ['auth.css', 'text/css'],
   '/dashboard.css': ['dashboard.css', 'text/css'],
+  '/pipeline.css': ['pipeline.css', 'text/css'],
+  '/relationships.css': ['relationships.css', 'text/css'],
+  '/directory.css': ['directory.css', 'text/css'],
+  '/relationships.js': ['relationships.js', 'text/javascript'],
   '/stage-art.svg': ['stage-art.svg', 'image/svg+xml'],
   '/app.js': ['app.js', 'text/javascript'],
 };
@@ -76,10 +81,15 @@ export async function handler(req, res) {
     if (!body || typeof body.name !== 'string' || !body.name.trim()) {
       json(res, 400, {error:'Informe um nome'}); return;
     }
-    const cols = fields[table];
+    if (table === 'deals') {
+      const error = followUpError(body);
+      if (error) { json(res, 400, {error}); return; }
+    }
+    const cols = writableFields(fields[table], body, Boolean(id));
     const values = cols.map(key => {
       if (key === 'contact' || key === 'company') return body[key] ? Number(body[key]) : null;
       if (key === 'amount') return Number(body[key] ?? 0);
+      if (key === 'follow_up_on') return body[key] || null;
       return String(body[key] ?? '').trim();
     });
     if (cols.some((key, index) => (key === 'company' || key === 'contact') && values[index] !== null &&
