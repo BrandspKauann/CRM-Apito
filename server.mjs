@@ -28,7 +28,7 @@ const assets = {
   '/stage-art.svg': ['stage-art.svg', 'image/svg+xml'],
   '/app.js': ['app.js', 'text/javascript'],
 };
-const stages = ['Prospecção', 'Em contato', 'Proposta', 'Ganho', 'Perdido'];
+const stages = ['Prospecção', 'Em contato', 'Proposta', 'Perdido', 'Ganho', 'Clientes', 'Finalizado sem desfecho', 'Orçamento aprovado'];
 function json(res, status, value) {
   res.writeHead(status, {'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store'}).end(JSON.stringify(value));
 }

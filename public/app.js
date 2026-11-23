@@ -260,7 +260,7 @@ function stageTone(stage) {
   return 'is-progress';
 }
 function stagePill(stage) {
-  return '<span class="stage-pill ' + stageTone(stage) + '">' + esc(stage) + '</span>';
+  return '<span class="stage-pill ' + stageTone(stage) + '">' + esc(stageLabel(stage)) + '</span>';
 }
 const followUpFilters = {
   all: 'Todos', overdue: 'Em atraso', today: 'Hoje', unscheduled: 'Sem data', future: 'Futuros'
@@ -271,33 +271,27 @@ let pipelineFocus = 'all';
 let boardView = 'contacts';
 const boardPages = new Map();
 const boardPageSize = 15;
-const portfolioColumns = [
-  ['Cliente', 'Clientes', 'Com cliente vinculado'],
-  ['Orçamento aprovado', 'Orçamento aprovado', 'Com orçamento aprovado'],
-  ['Oportunidade em aberto', 'Em negociação', 'Com negociação aberta'],
-  ['Oportunidade perdida', 'Perda registrada', 'Com perda registrada'],
-  ['Cancelamento registrado', 'Cancelamento', 'Com cancelamento'],
-  ['Orçamento finalizado sem desfecho', 'Finalizado sem desfecho', 'Com orçamento finalizado'],
-  ['', 'Sem histórico identificado', 'Sem histórico identificado']
-];
-
+const portfolioColumns = ['Entrada','Em negociação','Orçamento enviado','Perda','Ganho','Clientes','Finalizado sem desfecho','Orçamento aprovado'];
+const stageLabel = stage => ({'Prospecção':'Entrada','Em contato':'Em negociação','Proposta':'Orçamento enviado','Perdido':'Perda'})[stage] || stage;
+const closedStage = stage => ['Perda','Ganho','Clientes','Finalizado sem desfecho'].includes(stageLabel(stage));
+const priority = [5,4,7,2,1,3,6,0];
+function strongest(a,b) { return priority.indexOf(a) <= priority.indexOf(b) ? a : b; }
 function portfolioRanks(records) {
   const contacts = new Map(), companies = new Map();
-  const unknown = portfolioColumns.length - 1;
+  const tags = {'Cliente':5,'Orçamento aprovado':7,'Oportunidade em aberto':1,'Oportunidade perdida':3,
+    'Orçamento finalizado sem desfecho':6};
   for (const person of records.contacts) {
-    const index = portfolioColumns.findIndex(([tag]) => person.commercial_tags?.includes(tag));
-    contacts.set(person.id, index < 0 ? unknown : index);
+    contacts.set(person.id,(person.commercial_tags || []).reduce((best,tag)=>strongest(best,tags[tag] ?? 0),0));
   }
   for (const deal of records.deals) {
     if (!contacts.has(deal.contact)) continue;
-    const index = deal.stage === 'Ganho' ? 0 : deal.stage === 'Perdido' ? 3 : 2;
-    contacts.set(deal.contact, Math.min(contacts.get(deal.contact), index));
+    const index = portfolioColumns.indexOf(stageLabel(deal.stage));
+    if (index >= 0) contacts.set(deal.contact,strongest(contacts.get(deal.contact),index));
   }
   for (const person of records.contacts) {
-    if (person.company != null) companies.set(person.company,
-      Math.min(companies.get(person.company) ?? unknown, contacts.get(person.id)));
+    if (person.company != null) companies.set(person.company,strongest(companies.get(person.company) ?? 0,contacts.get(person.id)));
   }
-  return {contacts, companies};
+  return {contacts,companies};
 }
 
 function boardControls() {
@@ -313,10 +307,10 @@ function renderPortfolio(board) {
   const matches = directoryMatch(search);
   const groups = portfolioColumns.map(() => []);
   for (const row of data[boardView]) {
-    if (matches(row)) groups[directory.portfolio[boardView].get(row.id) ?? groups.length - 1].push(row);
+    if (matches(row)) groups[directory.portfolio[boardView].get(row.id) ?? 0].push(row);
   }
   board.innerHTML = groups.map((rows, index) => {
-    const title = portfolioColumns[index][person ? 1 : 2];
+    const title = portfolioColumns[index];
     const last = Math.max(0, Math.ceil(rows.length / boardPageSize) - 1);
     const current = Math.min(boardPages.get(index) || 0, last);
     const start = current * boardPageSize;
@@ -347,7 +341,7 @@ function localCalendarDay() {
     String(now.getDate()).padStart(2, '0')].join('-');
 }
 function followUpStatus(row, today) {
-  if (row.stage === 'Ganho' || row.stage === 'Perdido') return 'closed';
+  if (closedStage(row.stage)) return 'closed';
   if (!row.follow_up_on) return 'unscheduled';
   if (row.follow_up_on < today) return 'overdue';
   return row.follow_up_on === today ? 'today' : 'future';
@@ -446,7 +440,7 @@ function renderRows() {
         String(a.row.follow_up_on || '').localeCompare(String(b.row.follow_up_on || '')) || b.row.id - a.row.id);
       const total = current.reduce((sum, item) => sum + Number(item.row.amount || 0), 0);
       return '<article class="stage-column" data-stage="' + esc(stage) + '"><div class="stage-column-header"><div class="stage-column-title">' +
-        '<span class="stage-dot ' + stageTone(stage) + '"></span><h2>' + esc(stage) +
+        '<span class="stage-dot ' + stageTone(stage) + '"></span><h2>' + esc(stageLabel(stage)) +
         '</h2><span class="stage-count">' + current.length + '</span></div><small>' + money(total) +
         '</small></div><div class="stage-column-body">' +
         (current.map(({ row, status }) => recordButton(row, 'deals', 'deal', status)).join('') ||
@@ -468,7 +462,7 @@ function renderRows() {
     directoryPager(start, end, rows.length) + '</article>';
 }
 function drawHome() {
-  const open = data.deals.filter(row => !['Ganho', 'Perdido'].includes(row.stage));
+  const open = data.deals.filter(row => !closedStage(row.stage));
   const pipelineValue = open.reduce((sum, row) => sum + Number(row.amount || 0), 0);
   const metrics = [
     ['building', 'Empresas', data.companies.length, 'na sua base'],
@@ -482,7 +476,7 @@ function drawHome() {
     const amount = data.deals.filter(row => row.stage === stage).length;
     const width = Math.round(amount / largestStage * 100);
     return '<div class="pipeline-row"><span class="pipeline-label">' +
-      '<span class="stage-dot ' + stageTone(stage) + '"></span>' + esc(stage) +
+      '<span class="stage-dot ' + stageTone(stage) + '"></span>' + esc(stageLabel(stage)) +
       '</span><div class="pipeline-track" aria-hidden="true"><span class="pipeline-fill ' +
       stageTone(stage) + '" style="width:' + width + '%"></span></div>' +
       '<strong class="pipeline-number" aria-label="' + amount + (amount === 1 ? ' negócio' : ' negócios') + '">' +
@@ -683,7 +677,7 @@ function form(table, id, trail = [], initial = {}) {
       input = '<select name="' + key + '"></select>';
     } else if (key === 'stage') {
       input = '<select name="stage">' + data.stages.map(stage =>
-        '<option ' + (stage === row.stage ? 'selected' : '') + '>' + esc(stage) + '</option>'
+        '<option value="' + esc(stage) + '" ' + (stage === row.stage ? 'selected' : '') + '>' + esc(stageLabel(stage)) + '</option>'
       ).join('') + '</select>';
     } else if (key === 'notes') {
       input = '<textarea name="notes">' + esc(row.notes) + '</textarea>';
@@ -921,7 +915,7 @@ async function drawAutomations(notice = '') {
   try {
     const state = await request('GET');
     if (page !== 'automations') return;
-    const eventLabel = event => event === 'created' ? 'Ao criar um negócio' : 'Ao entrar em ' + event;
+    const eventLabel = event => event === 'created' ? 'Ao criar um negócio' : 'Ao entrar em ' + stageLabel(event);
     function renderRule(rule) {
       const email = rule.action === 'email';
       return `<article class="automation-rule">

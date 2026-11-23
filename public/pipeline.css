@@ -93,3 +93,18 @@
 @media (max-width: 650px) {
   #pipeline-filters { gap: 0 8px; }
 }
+#content .board, #content .board.portfolio { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: clamp(250px, 22vw, 305px); gap: 12px; }
+#content .stage-column { --rail: #657381; background: #f5f4f1; border: 1px solid #dfdcd7; border-radius: 14px; }
+#content .stage-column:nth-child(2) { --rail: #356e83; }
+#content .stage-column:nth-child(3) { --rail: #896b36; }
+#content .stage-column:nth-child(4) { --rail: #a5444d; }
+#content .stage-column:nth-child(5) { --rail: #33714e; }
+#content .stage-column:nth-child(6) { --rail: #395a50; }
+#content .stage-column:nth-child(7) { --rail: #786d76; }
+#content .stage-column:nth-child(8) { --rail: #615586; }
+#content .stage-column-header { border: 0; border-top: 4px solid var(--rail); padding: 14px; background: #fbfaf8; }
+#content .stage-column-title h2 { color: #292529; font-size: 15px; letter-spacing: -.025em; }
+#content .stage-count { margin-left: auto; border-radius: 20px; background: #ece9e4; color: #403b3d; font-variant-numeric: tabular-nums; }
+#content .stage-column-body { max-height: 67vh; overflow-y: auto; scrollbar-width: thin; }
+#content .portfolio-card, #content .deal-card { border-radius: 9px; padding: 13px; box-shadow: 0 2px 4px #251b2010; }
+#content .portfolio-card:hover, #content .deal-card:hover { border-color: var(--rail); }
