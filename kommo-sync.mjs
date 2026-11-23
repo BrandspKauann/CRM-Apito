@@ -1,3 +1,4 @@
+import {createHash} from 'node:crypto';
 import {extendedStreams, extendPage} from './kommo-extended.mjs';
 
 const base = '/api/v4/';
@@ -34,8 +35,11 @@ function invalid(message) {
 export function unpackPage(spec, body, page) {
   if (body == null) return {rows:[], nextPage:null}; // HTTP 204
   if (spec.single) return {rows:[body], nextPage:null};
-  const rows = Array.isArray(body) ? body : body._embedded?.[spec.key] ?? body[spec.key];
+  const collections = Object.values(body._embedded || {}).filter(Array.isArray);
+  const rows = Array.isArray(body) ? body : body._embedded?.[spec.key] ?? body[spec.key] ??
+    (collections.length===1 ? collections[0] : undefined);
   if (!Array.isArray(rows)) invalid('Formato de listagem inesperado.');
+  if (body._page != null && Number(body._page)!==page && rows.length) invalid('A Kommo devolveu outra página.');
   const next = body._links?.next?.href;
   let nextPage = null;
   if (next) {
@@ -86,18 +90,23 @@ export function preparePage(spec, rows, account) {
       }
       for (const [type, linked] of Object.entries(row._embedded || {})) {
         if (!Array.isArray(linked)) continue;
-        for (const item of linked) edge(kind,id,type,type === 'tags' ? kind+'.tags' : type,item?.id,item);
+        for (const item of linked) {
+          const dest = type==='tags' ? kind+'.tags' : type==='catalog_elements' && item?.catalog_id ?
+            'catalogs.'+item.catalog_id+'.elements' : type;
+          edge(kind,id,type,dest,item?.id,item);
+        }
       }
       edge(kind,id,'pipeline','pipelines',row.pipeline_id);
-      edge(kind,id,'status','statuses',row.status_id);
+      if (row.pipeline_id && row.status_id) edge(kind,id,'status','statuses',row.pipeline_id+':'+row.status_id);
       edge(kind,id,'responsible_user','users',row.responsible_user_id);
     }
     if (spec.kind.endsWith('.notes')) edge(spec.kind,id,'entity',spec.kind.split('.')[0],row.entity_id);
     if (spec.kind === 'tasks' || spec.kind === 'events') edge(spec.kind,id,'entity',entityKind(row.entity_type),row.entity_id);
     if (spec.kind === 'pipelines') {
       for (const stage of row._embedded?.statuses || []) {
-        records.push({kind:'statuses',source_id:String(stage.id),payload:stage});
-        edge('statuses',stage.id,'pipeline','pipelines',id);
+        const sourceId = id+':'+stage.id;
+        records.push({kind:'statuses',source_id:sourceId,payload:stage});
+        edge('statuses',sourceId,'pipeline','pipelines',id);
       }
     }
     if (spec.kind === 'catalogs') {
@@ -217,11 +226,13 @@ async function onePage(client, account, request) {
     const unpacked = unpackPage(spec,response,page);
     next = unpacked.nextPage;
     batch = preparePage(spec,unpacked.rows,account);
+    const signature = createHash('sha256').update(JSON.stringify(batch.records.map(r=>[r.kind,r.source_id]))).digest('hex');
+    if (unpacked.rows.length && signature===cursor.previous) invalid('A Kommo repetiu a página anterior.');
     await writePage(client,account.id,batch);
     await client.query(`UPDATE kommo_import.sync_state SET status=$3,rows_seen=rows_seen+$4,
-      cursor=jsonb_build_object('spec',$5::jsonb,'page',$6::int),updated_at=clock_timestamp()
+      cursor=jsonb_build_object('spec',$5::jsonb,'page',$6::int,'previous',$7::text),updated_at=clock_timestamp()
       WHERE account_id=$1 AND stream=$2`,[account.id,stream,next?'running':'complete',
-        unpacked.rows.length,JSON.stringify(spec),next || page]);
+        unpacked.rows.length,JSON.stringify(spec),next || page,signature]);
     return true;
   } catch (error) {
     // Never commit partial writes after database errors: let the transaction roll back.
