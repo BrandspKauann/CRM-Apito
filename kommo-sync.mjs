@@ -24,6 +24,12 @@ export function initialStreams() {
     }
   }
   specs.push({stream:'deleted_leads',kind:'deleted_leads',key:'leads',path:base + 'leads?with=only_deleted'});
+  specs.push(
+    {stream:'bots',kind:'bots',key:'bots',path:base+'bots'},
+    {stream:'widgets',kind:'widgets',key:'widgets',path:base+'widgets'},
+    {stream:'chat_templates',kind:'chat_templates',key:'templates',path:base+'chats/templates'},
+    {stream:'webhooks',kind:'webhooks',key:'webhooks',path:base+'webhooks'}
+  );
   return [...specs,...extendedStreams];
 }
 
