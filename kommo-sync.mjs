@@ -1,5 +1,6 @@
 import {createHash} from 'node:crypto';
 import {extendedStreams, extendPage} from './kommo-extended.mjs';
+import {importFileWindow} from './kommo-file-window.mjs';
 
 const base = '/api/v4/';
 const entityKinds = ['contacts', 'leads', 'companies'];
@@ -40,6 +41,13 @@ function invalid(message) {
 }
 export function unpackPage(spec, body, page) {
   if (body == null) return {rows:[], nextPage:null}; // HTTP 204
+  if (spec.kind==='file_links') {
+    const requested = spec.stream.slice('file_links:'.length);
+    const entities = body.entities ?? body._embedded?.entities;
+    if (!Array.isArray(entities) || (body.file_uuid != null && body.file_uuid!==requested))
+      invalid('Resposta de vínculos de arquivo inesperada.');
+    return {rows:[{...body,file_uuid:requested,entities}],nextPage:null};
+  }
   if (spec.single) return {rows:[body], nextPage:null};
   const collections = Object.values(body._embedded || {}).filter(Array.isArray);
   const rows = Array.isArray(body) ? body : body._embedded?.[spec.key] ?? body[spec.key] ??
@@ -66,6 +74,43 @@ function unique(rows, keys) {
   const values = new Map();
   for (const row of rows) values.set(JSON.stringify(keys.map(key => row[key])), row);
   return [...values.values()];
+}
+function pageSignature(batch) {
+  return createHash('sha256').update(JSON.stringify(batch.records.map(r=>[r.kind,r.source_id]))).digest('hex');
+}
+export function combineEventPages(spec, cursor, bodies, account) {
+  const records=[],edges=[];
+  let next=cursor.page, lastPage=cursor.page, count=0, signature=cursor.previous;
+  for (const body of bodies) {
+    if (next==null) break;
+    lastPage=next;
+    const result=unpackPage(spec,body,lastPage);
+    const batch=preparePage(spec,result.rows,account);
+    const current=pageSignature(batch);
+    if (result.rows.length && current===signature) invalid('A Kommo repetiu a página anterior.');
+    records.push(...batch.records);
+    edges.push(...batch.edges);
+    signature=current;
+    count+=result.rows.length;
+    next=result.nextPage;
+  }
+  return {next,lastPage,count,signature,batch:{records:unique(records,['kind','source_id']),
+    edges:unique(edges,['from_kind','from_id','relation','to_kind','to_id']),streams:[]}};
+}
+
+// Keep in-flight I/O overlapping, but start requests at most five times per second.
+// A failure prevents new starts; requests that already began are always observed.
+async function readWindow(inputs, read, stopAtEnd=false) {
+  const pending=[];
+  let stopped=false;
+  for (const input of inputs) {
+    if (pending.length) await new Promise(resolve=>setTimeout(resolve,210));
+    if (stopped) break;
+    pending.push(Promise.resolve().then(()=>read(input)).then(
+      body=>{ if (stopAtEnd && body==null) stopped=true; return {input,body}; },
+      error=>{ if (stopAtEnd || error.status===429) stopped=true; return {input,error}; }));
+  }
+  return Promise.all(pending);
 }
 export function preparePage(spec, rows, account) {
   const records = [], edges = [], streams = [];
@@ -292,6 +337,36 @@ async function importLinkGroup(client,account,request,spec,mode) {
     WHERE account_id=$1 AND stream=ANY($2::text[])`,[account.id,missing]);
   return true;
 }
+async function importEventWindow(client,account,request,stream,cursor) {
+  const {spec,page}=cursor;
+  const inputs=Array.from({length:5},(_,index)=>page+index);
+  const responses=await readWindow(inputs,n=>request(resourcePath(spec,n),spec.host,account),true);
+  const bodies=[];
+  for (const response of responses) {
+    if (response.error) break;
+    bodies.push(response.body);
+  }
+  if (!bodies.length) throw responses[0].error;
+  const group=combineEventPages(spec,cursor,bodies,account);
+  await writePage(client,account.id,group.batch);
+  await client.query(`UPDATE kommo_import.sync_state SET status=$3,rows_seen=rows_seen+$4,
+    cursor=jsonb_build_object('spec',$5::jsonb,'page',$6::int,'previous',$7::text),updated_at=clock_timestamp()
+    WHERE account_id=$1 AND stream=$2`,[account.id,stream,group.next?'running':'complete',
+    group.count,JSON.stringify(spec),group.next || group.lastPage,group.signature]);
+  const rateLimit=responses.find(r=>r.error?.status===429)?.error;
+  if (rateLimit) await pauseOnLimit(client,account,rateLimit);
+  const failure=responses[bodies.length];
+  if (group.next && failure?.input===group.next && failure.error) {
+    await markFailure(client,account,stream,{page:group.next,spec,previous:group.signature},failure.error);
+  }
+  return !rateLimit;
+}
+async function pauseOnLimit(client,account,error) {
+  const until=Date.now()+Math.max(2500, error.retryAfterMs || 0);
+  await client.query(`UPDATE kommo_import.sync_state SET cursor=jsonb_set(cursor,'{pauseUntil}',
+    to_jsonb(greatest(coalesce((cursor->>'pauseUntil')::bigint,0),$2::bigint)))
+    WHERE account_id=$1 AND stream='@source'`,[account.id,until]);
+}
 async function onePage(client, account, request) {
   // A single transaction owns the remote request, records, links and cursor. A terminated
   // worker rolls everything back, and a concurrent invocation immediately yields.
@@ -315,11 +390,12 @@ async function onePage(client, account, request) {
       AND COALESCE((cursor->>'retryAt')::bigint,0) <= $2
       AND NOT EXISTS(SELECT FROM kommo_import.sync_state WHERE account_id=$1 AND stream='@source'
         AND COALESCE((cursor->>'pauseUntil')::bigint,0)>$2)
-    ORDER BY CASE WHEN (stream='talks' AND cursor->>'page'='1') OR (stream LIKE 'messages:%' AND NOT EXISTS (
+    ORDER BY CASE WHEN (stream LIKE 'file_links:%' AND NOT $3::boolean) OR
+      (stream='talks' AND cursor->>'page'='1') OR (stream LIKE 'messages:%' AND NOT EXISTS (
           SELECT FROM kommo_import.sync_state WHERE account_id=$1 AND stream='@source' AND cursor->>'messageProbed'='true'
         )) THEN -1
         WHEN stream LIKE 'links.%:%' OR stream LIKE 'file_links:%' OR stream LIKE 'file_versions:%' THEN 2
-        WHEN stream LIKE 'messages:%' THEN 1 ELSE 0 END, updated_at, stream LIMIT 1`,[account.id,Date.now()]);
+        WHEN stream LIKE 'messages:%' THEN 1 ELSE 0 END, updated_at, stream LIMIT 1`,[account.id,Date.now(),Boolean(sourceState.fileLinkProbed)]);
   if (!result.rows.length) return false;
   let {stream,cursor} = result.rows[0];
   if (sourceState.probe) {
@@ -330,15 +406,24 @@ async function onePage(client, account, request) {
   const {spec,page} = cursor;
   let next, batch;
   try {
+    if (spec.kind==='events') return await importEventWindow(client,account,request,stream,cursor);
+    if (spec.kind==='file_links' && sourceState.fileLinkProbed==='verified') {
+      return await importFileWindow(client,account,{stream,cursor},request,{
+        readWindow,unpackPage,preparePage,writePage,markFailure,resourcePath
+      });
+    }
     if (spec.linkOwner && !cursor.bulkFallback && page===1 && sourceState['bulk_'+spec.linkOwner.kind]!=='individual' &&
         await importLinkGroup(client,account,request,spec,sourceState['bulk_'+spec.linkOwner.kind])) return true;
     const response = await request(resourcePath(spec,page),spec.host,account);
     const unpacked = unpackPage(spec,response,page);
     next = unpacked.nextPage;
     batch = preparePage(spec,unpacked.rows,account);
-    const signature = createHash('sha256').update(JSON.stringify(batch.records.map(r=>[r.kind,r.source_id]))).digest('hex');
+    const signature = pageSignature(batch);
     if (unpacked.rows.length && signature===cursor.previous) invalid('A Kommo repetiu a página anterior.');
     await writePage(client,account.id,batch);
+    if (spec.kind==='file_links' && !sourceState.fileLinkProbed) await client.query(
+      `UPDATE kommo_import.sync_state SET cursor=cursor || '{"fileLinkProbed":"verified"}'::jsonb
+       WHERE account_id=$1 AND stream='@source'`,[account.id]);
     if (spec.kind==='messages') await client.query(`UPDATE kommo_import.sync_state SET
       cursor=cursor || '{"messageProbed":true}'::jsonb WHERE account_id=$1 AND stream='@source'
       AND NOT (cursor ? 'messageProbed')`,[account.id]);
@@ -348,8 +433,14 @@ async function onePage(client, account, request) {
         unpacked.rows.length,JSON.stringify(spec),next || page,signature]);
     return true;
   } catch (error) {
+    await markFailure(client,account,stream,cursor,error);
+    return error.status!==429;
+  }
+}
+async function markFailure(client,account,stream,cursor,error) {
     // Never commit partial writes after database errors: let the transaction roll back.
     if (!error.importFormat && !error.remote) throw error;
+    const spec=cursor.spec;
     const status = error.status, attempts=(cursor.attempts || 0) + 1;
     const transient = error.remote && (!status || [408,425,429].includes(status) || status>=500);
     const retry = transient && attempts <= 8;
@@ -368,14 +459,13 @@ async function onePage(client, account, request) {
       await client.query(`UPDATE kommo_import.sync_state SET cursor=cursor || '{"messageProbed":true}'::jsonb
         WHERE account_id=$1 AND stream='@source' AND NOT (cursor ? 'messageProbed')`,[account.id]);
     }
-    if (status===429) await client.query(`UPDATE kommo_import.sync_state SET
-      cursor=jsonb_set(cursor,'{pauseUntil}',to_jsonb($2::bigint)) WHERE account_id=$1 AND stream='@source'`,
-      [account.id,Date.now()+delay]);
+    if (spec.kind==='file_links' && !retry) await client.query(
+      `UPDATE kommo_import.sync_state SET cursor=cursor || '{"fileLinkProbed":"individual"}'::jsonb
+       WHERE account_id=$1 AND stream='@source' AND NOT (cursor ? 'fileLinkProbed')`,[account.id]);
+    if (status===429) await pauseOnLimit(client,account,{retryAfterMs:delay});
     await client.query(`UPDATE kommo_import.sync_state SET status=$3,cursor=$4::jsonb,updated_at=clock_timestamp()
       WHERE account_id=$1 AND stream=$2`,[account.id,stream,retry?'retrying':
         [401,402,403].includes(status)?'blocked':'error',JSON.stringify(cursor)]);
-    return status !== 429;
-  }
 }
 export async function advanceSync(origin, request, retry) {
   const started = Date.now();
@@ -391,7 +481,7 @@ export async function advanceSync(origin, request, retry) {
   });
   for (let i=0;i<25 && Date.now()-started<11000;i++) {
     if (!await transaction(client=>onePage(client,account,request))) break;
-    await new Promise(resolve=>setTimeout(resolve,180));
+    await new Promise(resolve=>setTimeout(resolve,210));
   }
   return summarize(account);
 }

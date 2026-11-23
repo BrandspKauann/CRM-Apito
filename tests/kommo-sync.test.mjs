@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { unpackPage, preparePage, groupedLinks, initialStreams } from '../kommo-sync.mjs';
+import { unpackPage, preparePage, groupedLinks, initialStreams, combineEventPages } from '../kommo-sync.mjs';
 
 test('consulta eventos por páginas de 100 aceitas pela conta', () => {
   const eventStream = initialStreams().find(item => item.stream === 'events');
@@ -20,6 +20,60 @@ test('vínculos em lote exigem resposta completa e donos dentro do filtro', () =
 });
 
 const spec = { stream: 'contacts', kind: 'contacts', path: '/api/v4/contacts', key: 'contacts', limit: 2 };
+
+const events = {stream:'events', kind:'events', key:'events', path:'/api/v4/events', limit:2};
+const eventCursor = {spec:events, page:1, previous:null};
+const account = {id:101};
+const eventPage = (page, ids) => ({_page:page, _embedded:{events:ids.map(id=>({id}))}});
+
+test('janela de eventos deduplica registros e avança somente até a última página validada', () => {
+  const first = eventPage(1,['aa','bb']);
+  const second = eventPage(2,['bb','cc']);
+  const result = combineEventPages(events,eventCursor,[first,second],account);
+  assert.deepEqual(result.batch.records.map(row=>row.source_id).sort(),['aa','bb','cc']);
+  assert.equal(result.count,4);
+  assert.equal(result.lastPage,2);
+  assert.equal(result.next,3);
+  assert.ok(result.signature);
+  assert.equal(eventCursor.page,1);
+});
+
+test('janela para na primeira página final mesmo que uma consulta antecipada retorne registros', () => {
+  const result = combineEventPages(events,eventCursor,[
+    eventPage(1,['aa','bb']),null,eventPage(3,['ignorado'])
+  ],account);
+  assert.equal(result.lastPage,2);
+  assert.equal(result.next,null);
+  assert.equal(result.count,2);
+  assert.deepEqual(result.batch.records.map(row=>row.source_id),['aa','bb']);
+});
+
+test('janela rejeita salto de página, continuação inesperada e evento sem identificador', () => {
+  const first = eventPage(1,['aa','bb']);
+  for (const invalid of [
+    eventPage(3,['cc']),
+    {...eventPage(2,['cc']),_links:{next:{href:'?page=4'}}},
+    {_page:2,_embedded:{events:[{type:'lead_added'}]}}
+  ]) {
+    assert.throws(()=>combineEventPages(events,eventCursor,[first,invalid],account));
+  }
+  assert.equal(eventCursor.page,1);
+});
+
+test('valida o arquivo proprietário nos dois formatos de vínculos da API', () => {
+  const fileId='85218eab-a52e-41b7-9500-ed467a8fbb81';
+  const file={stream:'file_links:'+fileId,kind:'file_links',path:'/api/v4/files/'+fileId+'/links',
+    single:true,primaryKey:'file_uuid'};
+  const entities=[{entity_type:'leads',id:123}];
+  for (const body of [{file_uuid:fileId,entities},{file_uuid:fileId,_embedded:{entities}}]) {
+    const {rows,nextPage}=unpackPage(file,body,1);
+    assert.equal(rows.length,1);
+    assert.equal(rows[0].file_uuid,fileId);
+    assert.deepEqual(rows[0].entities,entities);
+    assert.equal(nextPage,null);
+  }
+  assert.throws(()=>unpackPage(file,{file_uuid:'00000000-0000-0000-0000-000000000000',entities:[]},1));
+});
 
 test('uma página cheia continua a importação mesmo sem link de paginação', () => {
   const rows = [{ id: 11 }, { id: 12 }];
