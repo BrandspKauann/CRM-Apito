@@ -11,7 +11,14 @@ const fields = {
   contacts: ['name', 'company', 'email', 'phone'],
   deals: ['name', 'contact', 'amount', 'stage', 'notes'],
 };
-const assets = {'/':'index.html', '/style.css':'style.css', '/auth.css':'auth.css', '/app.js':'app.js'};
+const assets = {
+  '/': ['index.html', 'text/html'],
+  '/style.css': ['style.css', 'text/css'],
+  '/auth.css': ['auth.css', 'text/css'],
+  '/dashboard.css': ['dashboard.css', 'text/css'],
+  '/stage-art.svg': ['stage-art.svg', 'image/svg+xml'],
+  '/app.js': ['app.js', 'text/javascript'],
+};
 const stages = ['Prospecção', 'Em contato', 'Proposta', 'Ganho', 'Perdido'];
 function json(res, status, value) {
   res.writeHead(status, {'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store'}).end(JSON.stringify(value));
@@ -29,9 +36,9 @@ export async function handler(req, res) {
   try {
     if (await handleAuth(req, res)) return;
     if (req.method === 'GET' && Object.hasOwn(assets, req.url)) {
-      const mime = {'/':'text/html', '/style.css':'text/css', '/auth.css':'text/css', '/app.js':'text/javascript'};
-      res.writeHead(200, {'Content-Type':mime[req.url] + '; charset=utf-8', 'Cache-Control':'no-cache'})
-        .end(await readFile(new URL('./public/' + assets[req.url], import.meta.url)));
+      const [filename, mime] = assets[req.url];
+      const content = await readFile(new URL('./public/' + filename, import.meta.url));
+      res.writeHead(200, {'Content-Type':mime + '; charset=utf-8', 'Cache-Control':'no-cache'}).end(content);
       return;
     }
     if (!requireAuth(req, res)) return;

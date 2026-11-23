@@ -1,149 +1,468 @@
-const $=s=>document.querySelector(s);
-function showLogin(message=''){
- data=undefined;
- if($('dialog').open)$('dialog').close();
- $('.frame').hidden=true;
- $('#login-screen').hidden=false;
- $('#login-error').textContent=message;
- $('#login-form').elements.username.focus();
-}
-async function apiFetch(url,options){
- const response=await fetch(url,options);
- if(response.status===401){showLogin('Sua sessão expirou. Entre novamente.');throw Error('Sessão expirada');}
- return response;
-}
-async function start(){
- try{
-  const response=await fetch('/api/session',{cache:'no-store'});
-  if(!response.ok)throw Error('Não foi possível verificar sua sessão.');
-  const session=await response.json();
-  if(!session.authenticated){showLogin();return;}
-  $('#login-screen').hidden=true;
-  $('.frame').hidden=false;
-  await refresh();
- }catch(error){
-  if(!$('#login-screen').hidden)return;
-  showLogin(error.message||'Não foi possível conectar ao CRM.');
- }
-}
-$('#login-form').onsubmit=async e=>{
- e.preventDefault();
- const form=e.currentTarget,button=e.submitter;
- button.disabled=true;$('#login-error').textContent='';
- try{
-  const response=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:form.elements.username.value,password:form.elements.password.value})});
-  const result=await response.json();
-  if(!response.ok)throw Error(result.error||'Usuário ou senha incorretos.');
-  form.elements.password.value='';
-  $('#login-screen').hidden=true;
-  $('.frame').hidden=false;
-  await refresh();
- }catch(error){
-  showLogin(error.message||'Não foi possível entrar.');
- }finally{button.disabled=false;}
+const $ = selector => document.querySelector(selector);
+const pages = {
+  home: 'Visão geral',
+  companies: 'Empresas',
+  contacts: 'Contatos',
+  deals: 'Funil de negócios',
+  integrations: 'Integrações'
 };
-$('#logout').onclick=async()=>{
- try{
-  const response=await fetch('/api/logout',{method:'POST'});
-  if(!response.ok)throw Error('Não foi possível encerrar a sessão.');
-  showLogin();
- }catch(error){$('#alert').textContent=error.message;}
+const singular = { companies: 'empresa', contacts: 'contato', deals: 'negócio' };
+const labels = {
+  name: 'Nome', city: 'Cidade', email: 'E-mail', phone: 'Telefone',
+  company: 'Empresa', amount: 'Valor (R$)', contact: 'Contato',
+  stage: 'Etapa', notes: 'Observações'
 };
-const pages={home:'Visão geral',companies:'Empresas',contacts:'Contatos',deals:'Funil de negócios',integrations:'Integrações'};
-const singular={companies:'empresa',contacts:'contato',deals:'negócio'};
-const labels={name:'Nome',city:'Cidade',email:'E-mail',phone:'Telefone',company:'Empresa',amount:'Valor (R$)',contact:'Contato',stage:'Etapa',notes:'Observações'};
-const keys={companies:['name','city'],contacts:['name','company','email','phone'],deals:['name','contact','amount','stage','notes']};
-const money=n=>Number(n).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
-const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let page='home', data, editing, search='';
-function linked(table,id){return data[table].find(row=>row.id===id)?.name||'—';}
-function summary(row,table){
- if(table==='companies')return row.city||'Cidade não informada';
- if(table==='contacts')return [linked('companies',row.company),row.email,row.phone].filter(Boolean).join(' · ');
- return linked('contacts',row.contact)+' · '+money(row.amount);
+const keys = {
+  companies: ['name', 'city'],
+  contacts: ['name', 'company', 'email', 'phone'],
+  deals: ['name', 'contact', 'amount', 'stage', 'notes']
+};
+const iconPaths = {
+  home: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+  building: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M9 21v-4h6v4M8 7h2m4 0h2M8 11h2m4 0h2"/>',
+  users: '<circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6m2 3a5 5 0 0 1 3 4v2"/>',
+  chart: '<path d="M4 20V4m0 16h16M8 16l4-5 3 2 5-7"/><path d="M17 6h3v3"/>',
+  plug: '<path d="M9 3v5m6-5v5M7 8h10v4a5 5 0 0 1-10 0V8Zm5 9v4"/>',
+  wallet: '<rect x="3" y="5" width="18" height="15" rx="2"/><path d="M3 9h18m-5 5h2"/>',
+  arrow: '<path d="M4 12h15m-6-6 6 6-6 6"/>',
+  chevron: '<path d="m9 5 7 7-7 7"/>',
+  search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4m10-4v4M3 10h18"/>',
+  check: '<path d="m5 12 4 4L19 6"/>'
+};
+function icon(name, size = 20) {
+  return '<svg aria-hidden="true" focusable="false" width="' + size + '" height="' + size +
+    '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">' +
+    iconPaths[name] + '</svg>';
 }
-function card(row,table){return '<button class="record" data-table="'+table+'" data-id="'+row.id+'"><strong>'+esc(row.name)+'</strong><span>'+esc(summary(row,table))+'</span>'+(table==='deals'?'<small>'+esc(row.stage)+'</small>':'')+'</button>';}
-function section(title,rows,table){return '<article><h3>'+title+'</h3>'+(rows.map(r=>card(r,table)).join('')||'<p class="empty">Nenhum registro por aqui.</p>')+'</article>';}
-function renderRows(){
- const rows=data[page].filter(r=>(r.name+' '+summary(r,page)).toLocaleLowerCase().includes(search.toLocaleLowerCase()));
- $('#rows').innerHTML=page==='deals'?data.stages.map(s=>section(s,rows.filter(r=>r.stage===s),page)).join(''):section(pages[page]+' ('+rows.length+')',rows,page);
+const money = amount => Number(amount || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const esc = value => String(value ?? '').replace(/[&<>"']/g, char =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+let page = 'home', data, editing, search = '';
+
+function showLogin(message = '') {
+  data = undefined;
+  if ($('dialog').open) $('dialog').close();
+  $('.frame').hidden = true;
+  $('#login-screen').hidden = false;
+  $('#login-error').textContent = message;
+  $('#login-form').elements.username.focus();
 }
-function draw(){
- $('nav').innerHTML=Object.entries(pages).map(([k,v],i)=>'<button data-page="'+k+'" aria-current="'+(page===k?'page':'false')+'"><span class="nav-icon">'+['◈','▦','♙','▥','⚙'][i]+'</span>'+v+'</button>').join('');
- $('h1').textContent=page==='home'?'Seu próximo negócio começa aqui.':pages[page];$('#eyebrow').textContent='';$('#subtitle').textContent=page==='home'?'Sua operação de prospecção, em uma visão conectada.':'';
- $('#create').textContent=page==='companies'?'+ Nova empresa':page==='contacts'?'+ Novo contato':'+ Novo negócio';
- $('#create').hidden=page==='integrations';
- if(page==='integrations'){drawIntegrations();return;}
- if(page!=='home'){
-  $('#content').innerHTML='<input id="search" type="search" aria-label="Buscar registros" placeholder="Buscar '+pages[page].toLowerCase()+'"><div id="rows" class="'+(page==='deals'?'board':'list')+'"></div>';
-  $('#search').value=search;$('#search').oninput=e=>{search=e.target.value;renderRows();};renderRows();return;
- }
- const open=data.deals.filter(r=>!['Ganho','Perdido'].includes(r.stage));
- const stats=[['Empresas encontradas',data.companies.length,'Perfil ideal'],['Abordagens criadas',data.deals.length,'Em andamento'],['Negócios em aberto',open.length,'Funil'],['Novas respostas',data.contacts.length,'Conversas']];
- $('#content').innerHTML='<section class="stats">'+stats.map(([k,v,tag])=>'<article><small>'+k+'</small><div><strong>'+esc(v)+'</strong><label>✦ '+tag+'</label></div></article>').join('')+'</section><section class="panels">'+section('Empresas para sua próxima conversa',data.companies.slice(0,5),'companies')+section('Sua próxima abordagem',data.deals.slice(0,5),'deals')+'</section>';
-}
-async function drawIntegrations(){
- $('#subtitle').textContent='Conecte suas ferramentas para consultar informações neste CRM.';
- $('#content').innerHTML='<p class="empty">Carregando integrações...</p>';
- try{
-  const response=await apiFetch('/api/integrations');if(!response.ok)throw Error('Não foi possível carregar as integrações');
-  const settings=await response.json();
-  $('#content').innerHTML='<div class="integration-grid">'+[['kommo','Kommo','Subdomínio da conta, como https://suaempresa.kommo.com','Token de longa duração da integração privada'],['meeventos','Meeventos','URL HTTPS do seu sistema Meeventos','API Token da Loja de Apps']].map(([id,title,placeholder,hint])=>'<article class="integration-card"><div class="integration-heading"><h3>'+title+'</h3><span class="status">'+(settings[id].connected?'Configurada':'Não conectada')+'</span></div><p>'+hint+'</p><form data-integration="'+id+'"><label>Endereço da conta<input name="baseUrl" type="url" required placeholder="'+placeholder+'" value="'+esc(settings[id].baseUrl)+'"></label><label>Token de acesso<input name="token" type="password" autocomplete="off" placeholder="'+(settings[id].connected?'Deixe vazio para manter o token':'Cole o token aqui')+'"></label><div class="integration-actions"><button type="button" data-test="'+id+'">Testar conexão</button><button type="submit">Salvar conexão</button>'+(settings[id].connected?'<button type="button" data-preview="'+id+'">Consultar dados</button>':'')+'</div></form><p class="integration-feedback" role="status"></p><div class="integration-preview"></div></article>').join('')+'</div>';
- }catch(error){$('#content').textContent=error.message;}
-}
-$('#content').addEventListener('click',async e=>{
- const previewButton=e.target.closest('[data-preview]');if(previewButton){await showPreview(previewButton.dataset.preview,previewButton.closest('.integration-card'));return;}
- const button=e.target.closest('[data-test]');if(!button)return;
- const form=button.closest('form'),card=button.closest('.integration-card');
- await integrationRequest(form,card,'test');
-});
-$('#content').addEventListener('submit',async e=>{
- if(!e.target.matches('[data-integration]'))return;
- e.preventDefault();await integrationRequest(e.target,e.target.closest('.integration-card'),'save');
-});
-async function integrationRequest(form,card,action){
- const provider=form.dataset.integration,feedback=card.querySelector('.integration-feedback');
- const buttons=form.querySelectorAll('button');buttons.forEach(b=>b.disabled=true);feedback.textContent='Verificando conexão...';
- try{
-  const response=await apiFetch('/api/integrations/'+provider+(action==='test'?'/test':''),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.fromEntries(new FormData(form)))});
-  const result=await response.json();if(!response.ok)throw Error(result.error);
-  feedback.textContent=action==='test'?'Conexão válida. Salve para ativar.':'Conexão salva.';
-  if(action==='save'){
-   form.elements.token.value='';card.querySelector('.status').textContent='Configurada';
-   if(!card.querySelector('[data-preview]'))form.querySelector('.integration-actions').insertAdjacentHTML('beforeend','<button type="button" data-preview="'+provider+'">Consultar dados</button>');
-   await showPreview(provider,card);
+async function apiFetch(url, options) {
+  const response = await fetch(url, options);
+  if (response.status === 401) {
+    showLogin('Sua sessão expirou. Entre novamente.');
+    throw Error('Sessão expirada');
   }
- }catch(error){feedback.textContent=error.message||'Falha na conexão';}finally{buttons.forEach(b=>b.disabled=false);}
+  return response;
 }
-async function showPreview(provider,card){
- const feedback=card.querySelector('.integration-feedback');feedback.textContent='Consultando dados...';
- try{const response=await apiFetch('/api/integrations/'+provider+'/preview');const list=await response.json();if(!response.ok)throw Error(list.error);
-  card.querySelector('.integration-preview').innerHTML=Object.entries(list).map(([label,rows])=>'<h4>'+({contacts:'Contatos',leads:'Negócios',clients:'Clientes',events:'Eventos'}[label]||label)+'</h4>'+(rows.length?'<ul>'+rows.map(row=>'<li>'+esc(row.name)+' <small>#'+esc(row.id)+'</small></li>').join('')+'</ul>':'<p>Nenhum registro encontrado.</p>')).join('');feedback.textContent='Dados atualizados.';
- }catch(error){feedback.textContent=error.message||'Falha na consulta';}
+async function start() {
+  try {
+    const response = await fetch('/api/session', { cache: 'no-store' });
+    if (!response.ok) throw Error('Não foi possível verificar sua sessão.');
+    const session = await response.json();
+    if (!session.authenticated) { showLogin(); return; }
+    $('#login-screen').hidden = true;
+    $('.frame').hidden = false;
+    await refresh();
+  } catch (error) {
+    if (!$('#login-screen').hidden) return;
+    showLogin(error.message || 'Não foi possível conectar ao CRM.');
+  }
 }
-function form(table,id){
- const row=data[table].find(r=>r.id===id)||{};editing={table,id};
- $('#modalTitle').textContent=(id?'Editar ':table==='companies'?'Nova ':'Novo ')+singular[table];
- $('#fields').innerHTML=keys[table].map(k=>{
-  let input;
-  if(['contact','company','stage'].includes(k)){
-   const options=k==='stage'?data.stages.map(s=>[s,s]):[['','Sem vínculo'],...data[k==='contact'?'contacts':'companies'].map(r=>[r.id,r.name])];
-   input='<select name="'+k+'">'+options.map(([v,t])=>'<option value="'+esc(v)+'" '+(String(v)===String(row[k])?'selected':'')+'>'+esc(t)+'</option>').join('')+'</select>';
-  }else if(k==='notes')input='<textarea name="notes">'+esc(row.notes)+'</textarea>';
-  else input='<input name="'+k+'" '+(k==='name'?'required maxlength="200"':'')+' type="'+(k==='amount'?'number':k==='email'?'email':k==='phone'?'tel':'text')+'" '+(k==='amount'?'min="0" step="0.01"':'')+' value="'+esc(row[k])+'">';
-  return '<label>'+labels[k]+input+'</label>';
- }).join('');$('#error').textContent='';$('dialog').showModal();
+$('#login-form').onsubmit = async event => {
+  event.preventDefault();
+  const formElement = event.currentTarget, button = event.submitter;
+  button.disabled = true;
+  $('#login-error').textContent = '';
+  try {
+    const response = await fetch('/api/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: formElement.elements.username.value,
+        password: formElement.elements.password.value
+      })
+    });
+    const result = await response.json();
+    if (!response.ok) throw Error(result.error || 'Usuário ou senha incorretos.');
+    formElement.elements.password.value = '';
+    $('#login-screen').hidden = true;
+    $('.frame').hidden = false;
+    await refresh();
+  } catch (error) {
+    showLogin(error.message || 'Não foi possível entrar.');
+  } finally {
+    button.disabled = false;
+  }
+};
+$('#logout').onclick = async () => {
+  try {
+    const response = await fetch('/api/logout', { method: 'POST' });
+    if (!response.ok) throw Error('Não foi possível encerrar a sessão.');
+    showLogin();
+  } catch (error) {
+    $('#alert').textContent = error.message;
+  }
+};
+
+function linked(table, id) {
+  return data[table].find(row => row.id === id)?.name || '';
 }
-async function refresh(){const res=await apiFetch('/api/crm');if(!res.ok)throw Error('Falha ao carregar o CRM');data=await res.json();draw();}
-$('nav').onclick=e=>{const button=e.target.closest('[data-page]');if(button){page=button.dataset.page;search='';draw();}};
-$('#create').onclick=()=>{if(data)form(page==='home'?'deals':page);};
-$('#content').onclick=e=>{const b=e.target.closest('[data-id]');if(b)form(b.dataset.table,Number(b.dataset.id));};
-$('#cancel').onclick=()=>$('dialog').close();
-$('dialog form').onsubmit=async e=>{
- e.preventDefault();const button=e.submitter;button.disabled=true;
- try{const {table,id}=editing;const res=await apiFetch('/api/'+table+(id?'/'+id:''),{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});
- if(!res.ok)throw Error((await res.json()).error);$('dialog').close();await refresh();}
- catch(err){($('dialog').open?$('#error'):$('#alert')).textContent=err.message;}finally{button.disabled=false;}
+function summary(row, table) {
+  if (table === 'companies') return row.city || 'Cidade não informada';
+  if (table === 'contacts') {
+    return [linked('companies', row.company), row.email, row.phone].filter(Boolean).join(' · ');
+  }
+  return [linked('contacts', row.contact), money(row.amount)].filter(Boolean).join(' · ');
+}
+function initials(value) {
+  return String(value || '?').trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toLocaleUpperCase('pt-BR');
+}
+function stageTone(stage) {
+  if (stage === 'Ganho') return 'is-won';
+  if (stage === 'Perdido') return 'is-lost';
+  if (stage === 'Proposta') return 'is-proposal';
+  return 'is-progress';
+}
+function stagePill(stage) {
+  return '<span class="stage-pill ' + stageTone(stage) + '">' + esc(stage) + '</span>';
+}
+function recordButton(row, table, variant = '') {
+  const target = 'type="button" data-table="' + table + '" data-id="' + esc(row.id) + '"';
+  if (variant === 'deal') {
+    return '<button ' + target + ' class="record deal-card"><span class="deal-card-top">' +
+      '<strong>' + esc(row.name) + '</strong>' + icon('chevron', 16) + '</span>' +
+      '<span class="deal-card-contact">' + esc(linked('contacts', row.contact) || 'Sem contato vinculado') +
+      '</span><span class="deal-card-bottom"><b>' + money(row.amount) + '</b></span></button>';
+  }
+  if (variant === 'recent') {
+    return '<button ' + target + ' class="record recent-row"><span class="recent-row-copy"><strong>' +
+      esc(row.name) + '</strong><small>' + esc(linked('contacts', row.contact) || 'Sem contato vinculado') +
+      '</small></span><span class="recent-row-side"><b>' + money(row.amount) + '</b>' +
+      stagePill(row.stage) + '</span></button>';
+  }
+  if (variant === 'company') {
+    const contacts = data.contacts.filter(contact => contact.company === row.id).length;
+    return '<button ' + target + ' class="record company-row"><span class="company-mark">' +
+      esc(initials(row.name)) + '</span><span class="company-row-name"><strong>' + esc(row.name) +
+      '</strong><small>' + esc(row.city || 'Cidade não informada') + '</small></span>' +
+      '<span class="company-row-count">' + contacts + ' ' + (contacts === 1 ? 'contato' : 'contatos') +
+      '</span>' + icon('chevron', 17) + '</button>';
+  }
+  return '<button ' + target + ' class="record collection-row"><span class="collection-icon">' +
+    (table === 'companies' ? icon('building', 19) : icon('users', 19)) + '</span>' +
+    '<span class="collection-row-copy"><strong>' + esc(row.name) + '</strong><small>' +
+    esc(summary(row, table)) + '</small></span>' + icon('chevron', 18) + '</button>';
+}
+function emptyState(title, description, table) {
+  return '<div class="content-empty"><span class="empty-icon">' +
+    icon(table === 'deals' ? 'chart' : table === 'contacts' ? 'users' : 'building', 25) +
+    '</span><strong>' + title + '</strong><p>' + description + '</p>' +
+    (table ? '<button type="button" class="text-link" data-new="' + table + '">' +
+      icon('plus', 16) + ' Adicionar ' + singular[table] + '</button>' : '') + '</div>';
+}
+function sectionHeading(kicker, title, target, linkText) {
+  return '<div class="section-heading"><div>' +
+    (kicker ? '<p class="section-kicker">' + kicker + '</p>' : '') +
+    '<h2>' + title + '</h2></div>' +
+    (target ? '<button class="text-link" type="button" data-go="' + target + '">' +
+      linkText + ' ' + icon('arrow', 16) + '</button>' : '') + '</div>';
+}
+function renderRows() {
+  const rows = data[page].filter(row => (row.name + ' ' + summary(row, page))
+    .toLocaleLowerCase('pt-BR').includes(search.toLocaleLowerCase('pt-BR')));
+  const target = $('#rows');
+  if (page === 'deals') {
+    target.innerHTML = data.stages.map(stage => {
+      const current = rows.filter(row => row.stage === stage);
+      const total = current.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+      return '<article class="stage-column"><div class="stage-column-header"><div class="stage-column-title">' +
+        '<span class="stage-dot ' + stageTone(stage) + '"></span><h2>' + esc(stage) +
+        '</h2><span class="stage-count">' + current.length + '</span></div><small>' + money(total) +
+        '</small></div><div class="stage-column-body">' +
+        (current.map(row => recordButton(row, 'deals', 'deal')).join('') ||
+          '<p class="stage-empty">Nenhum negócio nesta etapa.</p>') + '</div></article>';
+    }).join('');
+    return;
+  }
+  target.innerHTML = '<article class="collection-card">' +
+    sectionHeading('', pages[page] + ' <span class="collection-count">' +
+      rows.length + '</span>') +
+    (rows.map(row => recordButton(row, page)).join('') ||
+      emptyState(search ? 'Nenhum resultado encontrado' : 'Sua base começa aqui',
+        search ? 'Experimente outro termo na busca.' : 'Cadastre o primeiro registro para começar.', search ? '' : page)) +
+    '</article>';
+}
+function drawHome() {
+  const open = data.deals.filter(row => !['Ganho', 'Perdido'].includes(row.stage));
+  const pipelineValue = open.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+  const metrics = [
+    ['building', 'Empresas', data.companies.length, 'na sua base'],
+    ['users', 'Contatos', data.contacts.length, 'cadastrados'],
+    ['chart', 'Negócios em aberto', open.length, 'em negociação'],
+    ['wallet', 'Valor em aberto', money(pipelineValue), 'em negociação']
+  ];
+  const largestStage = Math.max(1, ...data.stages.map(stage =>
+    data.deals.filter(row => row.stage === stage).length));
+  const bars = data.stages.map(stage => {
+    const amount = data.deals.filter(row => row.stage === stage).length;
+    const width = Math.round(amount / largestStage * 100);
+    return '<div class="pipeline-row"><span class="pipeline-label">' +
+      '<span class="stage-dot ' + stageTone(stage) + '"></span>' + esc(stage) +
+      '</span><div class="pipeline-track" aria-hidden="true"><span class="pipeline-fill ' +
+      stageTone(stage) + '" style="width:' + width + '%"></span></div>' +
+      '<strong class="pipeline-number" aria-label="' + amount + (amount === 1 ? ' negócio' : ' negócios') + '">' +
+      amount + '</strong></div>';
+  }).join('');
+  const recent = data.deals.slice(0, 4);
+  const companies = data.companies.slice(0, 4);
+  $('#content').innerHTML =
+    '<section class="metrics" aria-label="Indicadores do CRM">' +
+    metrics.map(([glyph, label, number, detail], index) =>
+      '<article class="metric-card metric-' + index + '"><div class="metric-top"><span class="metric-label">' +
+      label + '</span><span class="metric-icon">' + icon(glyph, 21) + '</span></div>' +
+      '<strong class="metric-number">' + number + '</strong><span class="metric-detail">' +
+      detail + '</span></article>').join('') +
+    '</section><div class="dashboard-grid"><article class="dashboard-card pipeline-panel">' +
+    sectionHeading('', 'Oportunidades por etapa', 'deals', 'Abrir funil') +
+    '<div class="pipeline-bars">' + bars + '</div><div class="panel-footnote">' +
+    '<span class="footnote-dot"></span>' + data.deals.length + ' ' +
+    (data.deals.length === 1 ? 'negócio cadastrado' : 'negócios cadastrados') +
+    '</div></article><article class="dashboard-card recent-panel">' +
+    sectionHeading('', 'Negócios recentes', 'deals', 'Ver todos') +
+    '<div class="recent-list">' +
+    (recent.map(row => recordButton(row, 'deals', 'recent')).join('') ||
+      emptyState('Nenhum negócio ainda', 'Crie uma oportunidade para acompanhar seu funil.', 'deals')) +
+    '</div></article></div><article class="dashboard-card companies-panel">' +
+    sectionHeading('', 'Empresas cadastradas', 'companies', 'Ver empresas') +
+    '<div class="company-list">' +
+    (companies.map(row => recordButton(row, 'companies', 'company')).join('') ||
+      emptyState('Nenhuma empresa cadastrada', 'Adicione empresas para construir sua base.', 'companies')) +
+    '</div></article>';
+}
+function draw() {
+  $('nav').innerHTML = Object.entries(pages).map(([key, title]) =>
+    '<button type="button" data-page="' + key + '" aria-current="' +
+    (page === key ? 'page' : 'false') + '"><span class="nav-icon">' +
+    icon({ home: 'home', companies: 'building', contacts: 'users', deals: 'chart',
+      integrations: 'plug' }[key], 19) + '</span><span>' + title + '</span></button>').join('');
+  const title = $('#page-title') || $('.heading h1');
+  title.textContent = pages[page];
+  const breadcrumb = $('#breadcrumb');
+  if (breadcrumb) breadcrumb.textContent = pages[page];
+  const eyebrow = $('#eyebrow');
+  if (eyebrow) eyebrow.textContent = page === 'home' ?
+    new Intl.DateTimeFormat('pt-BR', {
+      weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
+    }).format(new Date()) : '';
+  $('#subtitle').textContent = ({
+    home: 'Acompanhe o funil e os negócios mais recentes.',
+    companies: 'Organize as empresas com quem você se relaciona.',
+    contacts: 'Consulte telefones, e-mails e empresas vinculadas.',
+    deals: 'Acompanhe cada oportunidade até o fechamento.',
+    integrations: 'Configure as conexões com Kommo e MeEventos.'
+  })[page];
+  $('#create').innerHTML = icon('plus', 18) + '<span>' +
+    (page === 'companies' ? 'Nova empresa' : page === 'contacts' ? 'Novo contato' : 'Novo negócio') +
+    '</span>';
+  $('#create').hidden = page === 'integrations';
+  $('#alert').textContent = '';
+  $('#content').className = page === 'home' ? 'dashboard-view' :
+    page === 'integrations' ? 'integrations-view' : 'records-view';
+  document.title = pages[page] + ' | CRM Apito de Mestre';
+  if (page === 'integrations') { drawIntegrations(); return; }
+  if (page === 'home') { drawHome(); return; }
+  $('#content').innerHTML = '<div class="records-toolbar"><label class="search-box">' +
+    icon('search', 19) + '<span class="sr-only">Buscar ' + pages[page].toLowerCase() +
+    '</span><input id="search" type="search" placeholder="Buscar ' +
+    pages[page].toLowerCase() + '"></label><span class="records-hint">' +
+    data[page].length + ' ' + (data[page].length === 1 ? 'registro' : 'registros') +
+    ' na sua base</span></div><div id="rows" class="' +
+    (page === 'deals' ? 'board' : 'list') + '"></div>';
+  $('#search').value = search;
+  $('#search').oninput = event => { search = event.target.value; renderRows(); };
+  renderRows();
+}
+function changePage(next) {
+  if (!pages[next]) return;
+  page = next;
+  search = '';
+  draw();
+  window.scrollTo(0, 0);
+}
+async function drawIntegrations() {
+  $('#content').innerHTML = '<p class="loading-state">Carregando integrações...</p>';
+  try {
+    const response = await apiFetch('/api/integrations');
+    if (!response.ok) throw Error('Não foi possível carregar as integrações.');
+    const settings = await response.json();
+    if (page !== 'integrations') return;
+    $('#content').innerHTML = '<div class="integration-grid">' +
+      [
+        ['kommo', 'Kommo', 'CRM e contatos',
+          'Subdomínio da conta, como https://suaempresa.kommo.com',
+          'Token de longa duração da integração privada'],
+        ['meeventos', 'Meeventos', 'Eventos e clientes',
+          'URL HTTPS do seu sistema Meeventos', 'API Token da Loja de Apps']
+      ].map(([id, title, category, placeholder, hint]) => {
+        const connected = settings[id].connected;
+        return '<article class="integration-card"><div class="integration-heading">' +
+          '<span class="integration-logo ' + id + '">' + title[0] + '</span>' +
+          '<div class="integration-name"><small>' + category + '</small><h2>' + title + '</h2></div>' +
+          '<span class="status ' + (connected ? 'is-connected' : '') + '">' +
+          (connected ? 'Configurada' : 'Não conectada') + '</span></div>' +
+          '<p class="integration-description">' + hint + '</p>' +
+          '<form data-integration="' + id + '"><label>Endereço da conta' +
+          '<input name="baseUrl" type="url" required placeholder="' + placeholder +
+          '" value="' + esc(settings[id].baseUrl) + '"></label>' +
+          '<label>Token de acesso<input name="token" type="password" autocomplete="off" placeholder="' +
+          (connected ? 'Deixe vazio para manter o token' : 'Cole o token aqui') +
+          '"></label><div class="integration-actions"><button type="button" data-test="' + id +
+          '">Testar conexão</button><button type="submit">Salvar conexão</button>' +
+          (connected ? '<button type="button" data-preview="' + id + '">Consultar dados</button>' : '') +
+          '</div></form><p class="integration-feedback" role="status"></p>' +
+          '<div class="integration-preview"></div></article>';
+      }).join('') + '</div>';
+  } catch (error) {
+    if (page === 'integrations') $('#content').innerHTML =
+      '<p class="loading-state" role="alert">' + esc(error.message) + '</p>';
+  }
+}
+async function integrationRequest(formElement, card, action) {
+  const provider = formElement.dataset.integration;
+  const feedback = card.querySelector('.integration-feedback');
+  const buttons = formElement.querySelectorAll('button');
+  buttons.forEach(button => button.disabled = true);
+  feedback.textContent = 'Verificando conexão...';
+  try {
+    const response = await apiFetch('/api/integrations/' + provider +
+      (action === 'test' ? '/test' : ''), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.fromEntries(new FormData(formElement)))
+    });
+    const result = await response.json();
+    if (!response.ok) throw Error(result.error);
+    feedback.textContent = action === 'test' ?
+      'Conexão válida. Salve para ativar.' : 'Conexão salva.';
+    if (action === 'save') {
+      formElement.elements.token.value = '';
+      const status = card.querySelector('.status');
+      status.textContent = 'Configurada';
+      status.classList.add('is-connected');
+      if (!card.querySelector('[data-preview]')) {
+        formElement.querySelector('.integration-actions').insertAdjacentHTML('beforeend',
+          '<button type="button" data-preview="' + provider + '">Consultar dados</button>');
+      }
+      await showPreview(provider, card);
+    }
+  } catch (error) {
+    feedback.textContent = error.message || 'Falha na conexão.';
+  } finally {
+    buttons.forEach(button => button.disabled = false);
+  }
+}
+async function showPreview(provider, card) {
+  const feedback = card.querySelector('.integration-feedback');
+  feedback.textContent = 'Consultando dados...';
+  try {
+    const response = await apiFetch('/api/integrations/' + provider + '/preview');
+    const list = await response.json();
+    if (!response.ok) throw Error(list.error);
+    card.querySelector('.integration-preview').innerHTML =
+      Object.entries(list).map(([label, rows]) =>
+        '<h3>' + ({ contacts: 'Contatos', leads: 'Negócios', clients: 'Clientes',
+          events: 'Eventos' }[label] || esc(label)) + '</h3>' +
+        (rows.length ? '<ul>' + rows.map(row => '<li>' + esc(row.name) +
+          ' <small>#' + esc(row.id) + '</small></li>').join('') + '</ul>' :
+          '<p>Nenhum registro encontrado.</p>')).join('');
+    feedback.textContent = 'Dados atualizados.';
+  } catch (error) {
+    feedback.textContent = error.message || 'Falha na consulta.';
+  }
+}
+function form(table, id) {
+  const row = data[table].find(item => item.id === id) || {};
+  editing = { table, id };
+  $('#modalTitle').textContent = (id ? 'Editar ' : table === 'companies' ? 'Nova ' : 'Novo ') +
+    singular[table];
+  $('#fields').innerHTML = keys[table].map(key => {
+    let input;
+    if (['contact', 'company', 'stage'].includes(key)) {
+      const options = key === 'stage' ? data.stages.map(stage => [stage, stage]) :
+        [['', 'Sem vínculo'], ...data[key === 'contact' ? 'contacts' : 'companies']
+          .map(item => [item.id, item.name])];
+      input = '<select name="' + key + '">' + options.map(([value, title]) =>
+        '<option value="' + esc(value) + '" ' +
+        (String(value) === String(row[key]) ? 'selected' : '') + '>' +
+        esc(title) + '</option>').join('') + '</select>';
+    } else if (key === 'notes') {
+      input = '<textarea name="notes">' + esc(row.notes) + '</textarea>';
+    } else {
+      input = '<input name="' + key + '" ' +
+        (key === 'name' ? 'required maxlength="200"' : '') + ' type="' +
+        (key === 'amount' ? 'number' : key === 'email' ? 'email' :
+          key === 'phone' ? 'tel' : 'text') + '" ' +
+        (key === 'amount' ? 'min="0" step="0.01"' : '') +
+        ' value="' + esc(row[key]) + '">';
+    }
+    return '<label>' + labels[key] + input + '</label>';
+  }).join('');
+  $('#error').textContent = '';
+  $('dialog').showModal();
+}
+async function refresh() {
+  const response = await apiFetch('/api/crm');
+  if (!response.ok) throw Error('Falha ao carregar o CRM.');
+  data = await response.json();
+  draw();
+}
+$('nav').onclick = event => {
+  const button = event.target.closest('[data-page]');
+  if (button) changePage(button.dataset.page);
+};
+$('#create').onclick = () => { if (data) form(page === 'home' ? 'deals' : page); };
+$('#content').addEventListener('click', async event => {
+  const link = event.target.closest('[data-go]');
+  if (link) { changePage(link.dataset.go); return; }
+  const add = event.target.closest('[data-new]');
+  if (add) { form(add.dataset.new); return; }
+  const preview = event.target.closest('[data-preview]');
+  if (preview) {
+    await showPreview(preview.dataset.preview, preview.closest('.integration-card'));
+    return;
+  }
+  const test = event.target.closest('[data-test]');
+  if (test) {
+    await integrationRequest(test.closest('form'), test.closest('.integration-card'), 'test');
+    return;
+  }
+  const record = event.target.closest('[data-id]');
+  if (record) form(record.dataset.table, Number(record.dataset.id));
+});
+$('#content').addEventListener('submit', async event => {
+  if (!event.target.matches('[data-integration]')) return;
+  event.preventDefault();
+  await integrationRequest(event.target, event.target.closest('.integration-card'), 'save');
+});
+$('#cancel').onclick = () => $('dialog').close();
+$('dialog form').onsubmit = async event => {
+  event.preventDefault();
+  const button = event.submitter;
+  button.disabled = true;
+  try {
+    const { table, id } = editing;
+    const response = await apiFetch('/api/' + table + (id ? '/' + id : ''), {
+      method: id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.fromEntries(new FormData(event.target)))
+    });
+    if (!response.ok) throw Error((await response.json()).error);
+    $('dialog').close();
+    await refresh();
+  } catch (error) {
+    ($('dialog').open ? $('#error') : $('#alert')).textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
 };
 start();
-

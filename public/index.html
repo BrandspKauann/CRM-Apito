@@ -3,41 +3,54 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#231e23">
   <title>Apito de Mestre | CRM</title>
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/auth.css">
+  <link rel="stylesheet" href="/dashboard.css">
   <script src="/app.js" defer></script>
 </head>
 <body>
   <main id="login-screen" class="login-screen" hidden>
+    <div class="login-cover">
+      <div class="brand"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 36 36" fill="none"><path d="m5 27 8-18h7l-8 18H5Zm14 0 4-10 7 10H19Z" fill="currentColor"/><circle cx="26" cy="9" r="3.3" fill="#FFB18F"/></svg></span><span class="wordmark">Apito <i>de</i> Mestre<span>CRM COMERCIAL</span></span></div>
+      <div class="cover-caption"><h2>Relacionamentos<br>e negócios.</h2></div>
+    </div>
     <section class="login-card" aria-labelledby="login-title">
-      <img class="brand-logo" src="https://apitodemestre.com.br/wp-content/uploads/2025/04/logo-OficialApito.webp" alt="Logo Apito de Mestre">
-      <p>Apito de Mestre</p>
-      <h1 id="login-title">Acesse o CRM</h1>
+      <p class="kicker">CRM comercial</p>
+      <h1 id="login-title">Acesse sua conta</h1>
       <form id="login-form">
-        <label>Usuário<input name="username" autocomplete="username" required autofocus></label>
+        <label>Usuário<input name="username" autocomplete="username" required></label>
         <label>Senha<input name="password" type="password" autocomplete="current-password" required></label>
         <p id="login-error" role="alert"></p>
-        <button type="submit">Entrar</button>
+        <button type="submit">Entrar no CRM</button>
       </form>
     </section>
   </main>
   <div class="frame" hidden>
-    <header><span class="window-dots">● ● ●</span><span>Gestão de relacionamentos e oportunidades</span><b>CRM Apito de Mestre</b></header>
-    <div class="layout">
-      <aside>
-        <h2><img class="brand-logo" src="https://apitodemestre.com.br/wp-content/uploads/2025/04/logo-OficialApito.webp" alt="Logo Apito de Mestre"> <span>Apito de Mestre</span></h2>
-        <div class="workspace">Meu workspace</div>
-        <nav aria-label="Menu principal"></nav>
-        <small class="profile">Seu workspace<br>Apito de Mestre</small>
-      </aside>
-      <main>
-        <div class="heading"><div><p id="eyebrow"></p><h1></h1><p id="subtitle"></p></div><div class="heading-actions"><button id="logout" type="button">Sair</button><button id="create"></button></div></div>
-        <div id="alert" role="alert"></div><div id="content"></div>
-        <footer>Apito de Mestre · Entretenimento e experiências corporativas <span>Dados online</span></footer>
+    <a class="skip-link" href="#page-title">Ir para o conteúdo</a>
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 36 36" fill="none"><path d="m5 27 8-18h7l-8 18H5Zm14 0 4-10 7 10H19Z" fill="currentColor"/><circle cx="26" cy="9" r="3.3" fill="#FFB18F"/></svg></span><span class="wordmark">Apito <i>de</i> Mestre<span>CRM COMERCIAL</span></span></div>
+      <div class="nav-label">Navegação</div>
+      <nav aria-label="Menu principal"></nav>
+      <div class="workspace-foot"><span class="workspace-monogram" aria-hidden="true">AM</span><div><strong>Apito de Mestre</strong><small id="workspace-status">Workspace comercial</small></div></div>
+    </aside>
+    <div class="workspace-main">
+      <header class="topbar">
+        <div class="crumb"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><path d="M9 5v14"/></svg><span>Workspace</span><span aria-hidden="true">/</span><b id="breadcrumb">Visão geral</b></div>
+        <button id="logout" type="button"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 4H5v16h5m-1-8h12m-4-4 4 4-4 4"/></svg>Sair</button>
+      </header>
+      <main class="page-body">
+        <div class="heading"><div class="heading-copy"><p id="eyebrow" class="kicker"></p><h1 id="page-title" tabindex="-1">Visão geral</h1><p id="subtitle"></p></div><button type="button" id="create" hidden></button></div>
+        <div id="alert" role="alert"></div>
+        <div id="content"></div>
       </main>
     </div>
   </div>
-  <dialog><form><h2 id="modalTitle"></h2><div id="fields"></div><p id="error" role="alert"></p><div class="actions"><button type="button" id="cancel">Cancelar</button><button type="submit">Salvar</button></div></form></dialog>
+  <dialog aria-labelledby="modalTitle"><form>
+    <div class="dialog-head"><h2 id="modalTitle"></h2></div>
+    <div id="fields"></div><p id="error" role="alert"></p>
+    <div class="actions"><button type="button" id="cancel">Cancelar</button><button type="submit">Salvar</button></div>
+  </form></dialog>
 </body>
 </html>

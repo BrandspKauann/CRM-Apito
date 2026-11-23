@@ -1,13 +1,22 @@
-[hidden] { display: none !important; }
-.login-screen { min-height: 100dvh; display: grid; place-items: center; padding: 24px; background: #f5f5f5; }
-.login-card { width: min(400px, 100%); padding: 32px; border: 1px solid #dedede; border-radius: 16px; background: #fff; box-shadow: 0 10px 32px #1111; }
-.login-card .brand-logo { display: block; margin: 0 auto 16px; }
-.login-card > p { text-align: center; color: #a9121d; font-weight: 700; }
-.login-card h1 { margin: 10px 0 24px; font-size: 30px; text-align: center; }
-.login-card label { display: block; margin-bottom: 16px; }
-.login-card input { display: block; margin-top: 7px; }
-.login-card button { width: 100%; margin-top: 8px; background: #d71920; color: #fff; font-weight: 700; }
-.login-card button:disabled { opacity: .6; cursor: wait; }
-#login-error { min-height: 20px; color: #a01d48; margin: 4px 0; }
-#logout { background: #eee; color: #333; }
-#logout:hover { background: #ddd; }
+.login-screen {
+  display: grid; grid-template-columns: minmax(0,.92fr) minmax(0,1.08fr);
+  min-height: 100dvh; align-items: stretch; background: var(--canvas);
+}
+.login-cover {
+  position: relative; display: flex; flex-direction: column; justify-content: space-between;
+  gap: 6rem; padding: clamp(32px,5vw,86px); overflow: hidden; color: white;
+  background: linear-gradient(0deg,#331820 1%,transparent 60%),url("/stage-art.svg") center 42% / auto 62% no-repeat,#331820;
+}
+.cover-caption > span { font-size: 13px; color: #ffbdad; }
+.cover-caption h2 { margin-top: 10px; font-size: clamp(36px,4.7vw,80px); line-height: 1.04; font-weight: 570; letter-spacing: -.055em; }
+.login-card { width: min(370px,calc(100% - 44px)); align-self: center; justify-self: center; }
+.login-card h1 { margin: 9px 0 28px; }
+.login-card form { display: grid; gap: 16px; }
+.login-card form > p:empty { display: none; }
+.login-card button { margin-top: 4px; min-height: 44px; }
+@media (max-width: 680px) {
+  .login-screen { display: flex; flex-direction: column; justify-content: flex-start; }
+  .login-cover { min-height: 115px; padding: 24px; background-position: center,right; }
+  .cover-caption { display: none; }
+  .login-card { margin: 50px auto 32px; }
+}
