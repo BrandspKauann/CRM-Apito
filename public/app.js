@@ -68,7 +68,7 @@ function buildDirectory(records) {
     if (row.company != null) contactCounts.set(row.company, (contactCounts.get(row.company) || 0) + 1);
     const company = companies.get(row.company);
     entries.set(row, {
-      text: normalizeSearch([row.name, company?.name, row.email, row.phone].filter(Boolean).join(' ')),
+      text: normalizeSearch([row.name, company?.name, row.email, row.phone, ...(row.commercial_tags || [])].filter(Boolean).join(' ')),
       digits: String(row.phone || '').replace(/\D/g, '')
     });
   }
@@ -80,7 +80,9 @@ function buildDirectory(records) {
 
 const directoryFilters = {
   contacts: [['', 'Todos os contatos'], ['phone', 'Com telefone'], ['email', 'Com e-mail'],
-    ['missingEmail', 'Sem e-mail'], ['withoutCompany', 'Sem empresa vinculada']],
+    ['missingEmail', 'Sem e-mail'], ['withoutCompany', 'Sem empresa vinculada'],
+    ...['Cliente', 'Orçamento aprovado', 'Oportunidade perdida', 'Perda sem fechamento identificado',
+      'Oportunidade em aberto', 'Orçamento finalizado sem desfecho', 'Cancelamento registrado'].map(tag => ['tag/' + tag, tag])],
   companies: [['', 'Todas as empresas'], ['hasContacts', 'Com contatos vinculados'],
     ['noContacts', 'Sem contatos vinculados']]
 };
@@ -96,6 +98,7 @@ function directoryRows() {
   const matches = directoryMatch(search);
   return data[page].filter(row => {
     if (!matches(row)) return false;
+    if (directoryFilter.startsWith('tag/')) return row.commercial_tags?.includes(directoryFilter.slice(4));
     switch (directoryFilter) {
       case 'phone': return Boolean(row.phone?.trim());
       case 'email': return Boolean(row.email?.trim());
@@ -243,7 +246,7 @@ function dealContactLabel(deal) {
 function summary(row, table) {
   if (table === 'companies') return [row.city, RecordRelationships.websiteDomain(row.website)].filter(Boolean).join(' · ') || 'Cidade não informada';
   if (table === 'contacts') {
-    return [linked('companies', row.company), row.email, row.phone].filter(Boolean).join(' · ');
+    return [...(row.commercial_tags || []), linked('companies', row.company), row.email, row.phone].filter(Boolean).join(' · ');
   }
   return [dealContactLabel(row), money(row.amount)].filter(Boolean).join(' · ');
 }
@@ -647,7 +650,13 @@ function form(table, id, trail = []) {
 async function refresh() {
   const response = await apiFetch('/api/crm');
   if (!response.ok) throw Error('Falha ao carregar o CRM.');
-  data = await response.json();
+  const records = await response.json();
+  const historyResponse = await apiFetch('/api/commercial-history');
+  if (historyResponse.ok) {
+    const groups = new Map((await historyResponse.json()).map(person => [person.id, person]));
+    for (const person of records.contacts) Object.assign(person, groups.get(person.id));
+  }
+  data = records;
   directory = buildDirectory(data);
   draw();
   KommoImport.resume();
