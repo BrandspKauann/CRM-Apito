@@ -409,11 +409,11 @@ function emptyState(title, description, table) {
     (table ? '<button type="button" class="text-link" data-new="' + table + '">' +
       icon('plus', 16) + ' Adicionar ' + singular[table] + '</button>' : '') + '</div>';
 }
-function sectionHeading(kicker, title, target, linkText) {
+function sectionHeading(kicker, title, target, linkText, keepBoard = false) {
   return '<div class="section-heading"><div>' +
     (kicker ? '<p class="section-kicker">' + kicker + '</p>' : '') +
     '<h2>' + title + '</h2></div>' +
-    (target ? '<button class="text-link" type="button" data-go="' + target + '">' +
+    (target ? '<button class="text-link" type="button"' + (keepBoard ? ' data-current-board' : '') + ' data-go="' + target + '">' +
       linkText + ' ' + icon('arrow', 16) + '</button>' : '') + '</div>';
 }
 function renderRows() {
@@ -428,15 +428,15 @@ function renderRows() {
   if (page === 'deals') {
     const today = localCalendarDay();
     const counts = { all: rows.length, overdue: 0, today: 0, unscheduled: 0, future: 0 };
-    const byStage = new Map(data.stages.map(stage => [stage, []]));
+    const byStage = new Map(data.stages.map(stage => [stageLabel(stage), []]));
     for (const row of rows) {
       const status = followUpStatus(row, today);
       if (status !== 'closed') counts[status]++;
-      if (pipelineFocus === 'all' || pipelineFocus === status) byStage.get(row.stage)?.push({ row, status });
+      if (pipelineFocus === 'all' || pipelineFocus === status) byStage.get(stageLabel(row.stage))?.push({ row, status });
     }
     renderPipelineFilters(target, counts);
     target.innerHTML = data.stages.map(stage => {
-      const current = byStage.get(stage).sort((a, b) => followUpOrder[a.status] - followUpOrder[b.status] ||
+      const current = byStage.get(stageLabel(stage)).sort((a, b) => followUpOrder[a.status] - followUpOrder[b.status] ||
         String(a.row.follow_up_on || '').localeCompare(String(b.row.follow_up_on || '')) || b.row.id - a.row.id);
       const total = current.reduce((sum, item) => sum + Number(item.row.amount || 0), 0);
       return '<article class="stage-column" data-stage="' + esc(stage) + '"><div class="stage-column-header"><div class="stage-column-title">' +
@@ -462,24 +462,32 @@ function renderRows() {
     directoryPager(start, end, rows.length) + '</article>';
 }
 function drawHome() {
-  const open = data.deals.filter(row => !closedStage(row.stage));
-  const pipelineValue = open.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+  const negotiation = data.deals.filter(row => stageLabel(row.stage) === 'Em negociação');
+  const negotiationValue = negotiation.reduce((sum, row) => sum + Number(row.amount || 0), 0);
   const metrics = [
-    ['building', 'Empresas', data.companies.length, 'na sua base'],
-    ['users', 'Contatos', data.contacts.length, 'cadastrados'],
-    ['chart', 'Negócios em aberto', open.length, 'em negociação'],
-    ['wallet', 'Valor em aberto', money(pipelineValue), 'em negociação']
+    ['building', 'Empresas', data.companies.length, 'na base'],
+    ['users', 'Contatos', data.contacts.length, 'na base'],
+    ['chart', 'Negócios', data.deals.length, 'no funil'],
+    ['wallet', 'Valor em negociação', money(negotiationValue), 'Etapa: Em negociação']
   ];
-  const largestStage = Math.max(1, ...data.stages.map(stage =>
-    data.deals.filter(row => row.stage === stage).length));
-  const bars = data.stages.map(stage => {
-    const amount = data.deals.filter(row => row.stage === stage).length;
+  const isDeals = boardView === 'deals';
+  const entity = { contacts: 'contato', companies: 'empresa', deals: 'negócio' }[boardView];
+  const stages = isDeals ? data.stages.map(stageLabel) : portfolioColumns;
+  const totals = new Map(stages.map(stage => [stage, 0]));
+  for (const row of data[boardView]) {
+    const stage = isDeals ? stageLabel(row.stage) : portfolioColumns[directory.portfolio[boardView].get(row.id) ?? 0];
+    if (totals.has(stage)) totals.set(stage, totals.get(stage) + 1);
+  }
+  const largestStage = Math.max(1, ...totals.values());
+  const bars = stages.map(stage => {
+    const amount = totals.get(stage);
+    const tone = stageTone(data.stages.find(key => stageLabel(key) === stage) || stage);
     const width = Math.round(amount / largestStage * 100);
     return '<div class="pipeline-row"><span class="pipeline-label">' +
-      '<span class="stage-dot ' + stageTone(stage) + '"></span>' + esc(stageLabel(stage)) +
+      '<span class="stage-dot ' + tone + '"></span>' + esc(stage) +
       '</span><div class="pipeline-track" aria-hidden="true"><span class="pipeline-fill ' +
-      stageTone(stage) + '" style="width:' + width + '%"></span></div>' +
-      '<strong class="pipeline-number" aria-label="' + amount + (amount === 1 ? ' negócio' : ' negócios') + '">' +
+      tone + '" style="width:' + width + '%"></span></div>' +
+      '<strong class="pipeline-number" aria-label="' + amount + ' ' + entity + (amount === 1 ? '' : 's') + '">' +
       amount + '</strong></div>';
   }).join('');
   const recent = data.deals.slice(0, 4);
@@ -492,10 +500,9 @@ function drawHome() {
       '<strong class="metric-number">' + number + '</strong><span class="metric-detail">' +
       detail + '</span></article>').join('') +
     '</section><div class="dashboard-grid"><article class="dashboard-card pipeline-panel">' +
-    sectionHeading('', 'Oportunidades por etapa', 'deals', 'Abrir funil') +
+    sectionHeading('', (isDeals ? 'Negócios' : pages[boardView]) + ' por etapa', 'deals', 'Abrir funil', true) + boardControls() +
     '<div class="pipeline-bars">' + bars + '</div><div class="panel-footnote">' +
-    '<span class="footnote-dot"></span>' + data.deals.length + ' ' +
-    (data.deals.length === 1 ? 'negócio cadastrado' : 'negócios cadastrados') +
+    '<span class="footnote-dot"></span>' + data[boardView].length + ' ' + entity + (data[boardView].length === 1 ? '' : 's') +
     '</div></article><article class="dashboard-card recent-panel">' +
     sectionHeading('', 'Negócios recentes', 'deals', 'Ver todos') +
     '<div class="recent-list">' +
@@ -850,7 +857,10 @@ $('#content').addEventListener('click', async event => {
   }
   const link = event.target.closest('[data-go]');
   if (link) {
-    if (link.dataset.go === 'deals') boardView = 'deals';
+    if (link.dataset.go === 'deals') {
+      if (!link.hasAttribute('data-current-board')) boardView = 'deals';
+      pipelineFocus = 'all';
+    }
     changePage(link.dataset.go);
     return;
   }
