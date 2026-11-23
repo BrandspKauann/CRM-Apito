@@ -268,6 +268,78 @@ const followUpFilters = {
 const followUpOrder = { overdue: 0, today: 1, unscheduled: 2, future: 3, closed: 4 };
 const dayFormatter = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'UTC' });
 let pipelineFocus = 'all';
+let boardView = 'contacts';
+const boardPages = new Map();
+const boardPageSize = 15;
+const portfolioColumns = [
+  ['Cliente', 'Clientes', 'Com cliente vinculado'],
+  ['Orçamento aprovado', 'Orçamento aprovado', 'Com orçamento aprovado'],
+  ['Oportunidade em aberto', 'Em negociação', 'Com negociação aberta'],
+  ['Oportunidade perdida', 'Perda registrada', 'Com perda registrada'],
+  ['Cancelamento registrado', 'Cancelamento', 'Com cancelamento'],
+  ['Orçamento finalizado sem desfecho', 'Finalizado sem desfecho', 'Com orçamento finalizado'],
+  ['', 'Sem histórico identificado', 'Sem histórico identificado']
+];
+
+function portfolioRanks(records) {
+  const contacts = new Map(), companies = new Map();
+  const unknown = portfolioColumns.length - 1;
+  for (const person of records.contacts) {
+    const index = portfolioColumns.findIndex(([tag]) => person.commercial_tags?.includes(tag));
+    contacts.set(person.id, index < 0 ? unknown : index);
+  }
+  for (const deal of records.deals) {
+    if (!contacts.has(deal.contact)) continue;
+    const index = deal.stage === 'Ganho' ? 0 : deal.stage === 'Perdido' ? 3 : 2;
+    contacts.set(deal.contact, Math.min(contacts.get(deal.contact), index));
+  }
+  for (const person of records.contacts) {
+    if (person.company != null) companies.set(person.company,
+      Math.min(companies.get(person.company) ?? unknown, contacts.get(person.id)));
+  }
+  return {contacts, companies};
+}
+
+function boardControls() {
+  return '<div class="board-views" role="group" aria-label="Visualização do funil">' +
+    ['contacts','companies','deals'].map(key =>
+      '<button type="button" data-board-view="' + key + '" aria-pressed="' + (boardView === key) + '">' +
+      (key === 'deals' ? 'Negócios' : pages[key]) + ' <b>' + data[key].length.toLocaleString('pt-BR') +
+      '</b></button>').join('') + '</div>';
+}
+
+function renderPortfolio(board) {
+  const person = boardView === 'contacts';
+  const matches = directoryMatch(search);
+  const groups = portfolioColumns.map(() => []);
+  for (const row of data[boardView]) {
+    if (matches(row)) groups[directory.portfolio[boardView].get(row.id) ?? groups.length - 1].push(row);
+  }
+  board.innerHTML = groups.map((rows, index) => {
+    const title = portfolioColumns[index][person ? 1 : 2];
+    const last = Math.max(0, Math.ceil(rows.length / boardPageSize) - 1);
+    const current = Math.min(boardPages.get(index) || 0, last);
+    const start = current * boardPageSize;
+    const cards = rows.slice(start, start + boardPageSize).map(row => {
+      const count = directory.contactCounts.get(row.id) || 0;
+      const detail = person ? [linked('companies', row.company), row.email || row.phone] :
+        [count + (count === 1 ? ' contato vinculado' : ' contatos vinculados'), row.city];
+      return '<button type="button" class="record portfolio-card" data-table="' + boardView + '" data-id="' +
+        row.id + '"><strong>' + esc(row.name) + '</strong><small>' +
+        esc(detail.filter(Boolean).join(' · ')) + '</small></button>';
+    }).join('');
+    const pager = last ? '<div class="portfolio-pages"><button type="button" data-column="' + index +
+      '" data-page-number="' + (current - 1) + '" aria-label="Página anterior de ' + title + '"' +
+      (current === 0 ? ' disabled' : '') + '>‹</button><span>' + (start + 1) + '–' +
+      Math.min(start + boardPageSize, rows.length) + '</span><button type="button" data-column="' + index +
+      '" data-page-number="' + (current + 1) + '" aria-label="Próxima página de ' + title + '"' +
+      (current === last ? ' disabled' : '') + '>›</button></div>' : '';
+    return '<article class="stage-column"><div class="stage-column-header"><div class="stage-column-title"><h2>' +
+      title + '</h2><span class="stage-count">' + rows.length.toLocaleString('pt-BR') +
+      '</span></div>' + pager + '</div><div class="stage-column-body">' +
+      (cards || '<p class="stage-empty">Nenhum cadastro.</p>') + '</div></article>';
+  }).join('');
+}
 
 function localCalendarDay() {
   const now = new Date();
@@ -351,6 +423,10 @@ function sectionHeading(kicker, title, target, linkText) {
       linkText + ' ' + icon('arrow', 16) + '</button>' : '') + '</div>';
 }
 function renderRows() {
+  if (page === 'deals' && boardView !== 'deals') {
+    renderPortfolio($('#rows'));
+    return;
+  }
   const term = normalizeSearch(search);
   const rows = page === 'deals' ? data.deals.filter(row => !term || normalizeSearch(
     [row.name, row.stage, row.next_action, summary(row, page)].join(' ')).includes(term)) : directoryRows();
@@ -478,9 +554,19 @@ function draw() {
     data[page].length + ' ' + (data[page].length === 1 ? 'registro' : 'registros') +
     ' na sua base</span></div><div id="rows" class="' +
     (page === 'deals' ? 'board' : 'list') + '"></div>';
+  if (page === 'deals') {
+    $('.records-toolbar').insertAdjacentHTML('beforebegin', boardControls());
+    $('#rows').classList.toggle('portfolio', boardView !== 'deals');
+    $('#search').placeholder = boardView === 'contacts' ? 'Buscar nome, empresa, e-mail ou telefone' :
+      boardView === 'companies' ? 'Buscar empresa, cidade ou domínio' : 'Buscar negócio';
+    $('.records-hint').textContent = boardView === 'companies' ? 'Histórico dos contatos vinculados' :
+      boardView === 'contacts' ? 'Histórico comercial por contato' : 'Acompanhamento dos negócios';
+    if (boardView !== 'deals' && data.historyUnavailable) $('#alert').textContent =
+      'O histórico importado está indisponível. O quadro considera apenas os negócios deste CRM.';
+  }
   if (directoryFilters[page]) mountDirectoryFilter();
   $('#search').value = search;
-  $('#search').oninput = event => { search = event.target.value; directoryPage = 1; renderRows(); };
+  $('#search').oninput = event => { search = event.target.value; directoryPage = 1; boardPages.clear(); renderRows(); };
   renderRows();
 }
 function changePage(next) {
@@ -488,6 +574,7 @@ function changePage(next) {
   page = next;
   directoryPage = 1;
   directoryFilter = '';
+  boardPages.clear();
   search = '';
   draw();
   window.scrollTo(0, 0);
@@ -585,8 +672,8 @@ async function showPreview(provider, card) {
     feedback.textContent = error.message || 'Falha na consulta.';
   }
 }
-function form(table, id, trail = []) {
-  const row = data[table].find(item => item.id === id) || {};
+function form(table, id, trail = [], initial = {}) {
+  const row = data[table].find(item => item.id === id) || initial;
   editing = { table, id };
   $('#modalTitle').textContent = (id ? 'Editar ' : table === 'companies' ? 'Nova ' : 'Novo ') +
     singular[table];
@@ -637,6 +724,20 @@ function form(table, id, trail = []) {
   }
   $('#error').textContent = '';
   RecordRelationships.mount(table, row, data, trail, form);
+  if (page === 'deals' && table === 'contacts' && id) {
+    const editor = $('dialog form');
+    const original = new URLSearchParams(new FormData(editor)).toString();
+    const create = document.createElement('button');
+    create.type = 'button';
+    create.className = 'rel-action';
+    create.textContent = 'Criar negócio para este contato';
+    create.onclick = () => {
+      if (new URLSearchParams(new FormData(editor)).toString() !== original &&
+          !window.confirm('Descartar as alterações da ficha e abrir um novo negócio?')) return;
+      form('deals', undefined, [], {name: row.name, contact: id, stage: data.stages[0]});
+    };
+    $('#fields .rel-actions').after(create);
+  }
   const dialog = $('dialog');
   if (dialog.open) {
     dialog.scrollTop = 0;
@@ -656,8 +757,10 @@ async function refresh() {
     const groups = new Map((await historyResponse.json()).map(person => [person.id, person]));
     for (const person of records.contacts) Object.assign(person, groups.get(person.id));
   }
+  records.historyUnavailable = !historyResponse.ok;
   data = records;
   directory = buildDirectory(data);
+  directory.portfolio = portfolioRanks(data);
   draw();
   KommoImport.resume();
 }
@@ -725,6 +828,23 @@ content.addEventListener('pointerup', async event => {
   } finally { movesInProgress.delete(deal.id); }
 });
 $('#content').addEventListener('click', async event => {
+  const view = event.target.closest('[data-board-view]');
+  if (view) {
+    boardView = view.dataset.boardView;
+    boardPages.clear();
+    search = '';
+    draw();
+    $('#content [aria-pressed="true"]')?.focus({preventScroll:true});
+    return;
+  }
+  const pager = event.target.closest('[data-page-number]');
+  if (pager) {
+    const column = Number(pager.dataset.column);
+    boardPages.set(column, Number(pager.dataset.pageNumber));
+    renderRows();
+    $('#rows [data-column="' + column + '"]:not(:disabled)')?.focus({preventScroll:true});
+    return;
+  }
   const step = event.target.closest('[data-directory-step]');
   if (step && directoryFilters[page]) {
     directoryPage += Number(step.dataset.directoryStep);
@@ -735,7 +855,11 @@ $('#content').addEventListener('click', async event => {
     return;
   }
   const link = event.target.closest('[data-go]');
-  if (link) { changePage(link.dataset.go); return; }
+  if (link) {
+    if (link.dataset.go === 'deals') boardView = 'deals';
+    changePage(link.dataset.go);
+    return;
+  }
   const add = event.target.closest('[data-new]');
   if (add) { form(add.dataset.new); return; }
   const preview = event.target.closest('[data-preview]');
@@ -768,6 +892,11 @@ $('dialog form').onsubmit = async event => {
       body: JSON.stringify(Object.fromEntries(new FormData(event.target)))
     });
     if (!response.ok) throw Error((await response.json()).error);
+    if (page === 'deals' && table === 'deals' && !id) {
+      boardView = 'deals';
+      pipelineFocus = 'all';
+      search = '';
+    }
     $('dialog').close();
     await refresh();
   } catch (error) {
