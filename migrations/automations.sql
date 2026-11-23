@@ -9,3 +9,5 @@ CREATE TABLE IF NOT EXISTS automation_runs (
 );
 
 ALTER TABLE automation_rules ADD COLUMN IF NOT EXISTS action text NOT NULL DEFAULT 'email';
+ALTER TABLE automation_rules ADD COLUMN IF NOT EXISTS template_key text;
+CREATE UNIQUE INDEX IF NOT EXISTS automation_rules_template ON automation_rules(template_key);

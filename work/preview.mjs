@@ -3,16 +3,21 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { extname, relative, resolve, isAbsolute } from 'node:path';
 import { followUpError, writableFields } from '../follow-up.mjs';
+import defaults from '../automation-defaults.mjs';
 
 const root = fileURLToPath(new URL('../public/', import.meta.url));
 const stages = ['Prospecção', 'Em contato', 'Proposta', 'Ganho', 'Perdido'];
 const tables = { companies: [], contacts: [], deals: [] };
-const rules = [], runs = [];
+const rules = defaults.map(({name, event, message}, index) => ({
+  id: index + 1, name, event, message,
+  enabled: true, action: 'followup', subject: 'Próxima ação',
+}));
+const runs = [];
 function trigger(deal,event) {
   for (const rule of rules.filter(rule=>rule.enabled && rule.event===event)) {
     if (rule.action==='followup') {
       const person=tables.contacts.find(c=>c.id===deal.contact);
-      deal.next_action=rule.message.replace(/{{(contato|negocio)}}/g,(_,key)=>key==='contato'?person?.name || '':deal.name);
+      deal.next_action=rule.message.replace(/{{(contato|negocio)}}/g,(_,key)=>key==='contato'?person?.name || '':deal.name).slice(0,200);
     }
     runs.unshift({id:runs.length+1,deal_id:deal.id,name:rule.name,created_at:new Date(),status:rule.action==='followup'?'Próxima ação definida':'SMTP não configurado'});
   }
@@ -93,10 +98,22 @@ export const server = http.createServer(async (req, res) => {
         if(req.headers.origin && new URL(req.headers.origin).host!==req.headers.host) return json(res,403,{});
         let raw=''; for await(const chunk of req){raw+=chunk;if(raw.length>32000)return json(res,413,{});}
         const b=JSON.parse(raw);
-        if(req.method==='POST' && ['email','followup'].includes(b.action) && ['created',...stages].includes(b.event) && [b.name,b.subject,b.message].every(v=>typeof v==='string' && v.trim())){
-          rules.push({...b,id:rules.length+1,enabled:true}); return json(res,201,{});
-        }
         const rule=rules.find(r=>r.id===b.id);
+        if (req.method === 'POST' || req.method === 'PUT') {
+          if (!['email','followup'].includes(b.action) || !['created',...stages].includes(b.event) ||
+              ![b.name,b.subject,b.message].every(v=>typeof v==='string' && v.trim()) ||
+              b.name.length>120 || b.subject.length>200 || b.message.length>(b.action==='followup'?200:8000) || /[\r\n]/.test(b.subject)) {
+            return json(res,400,{error:'Confira o nome, o gatilho e a ação.'});
+          }
+          const values = {name:b.name.trim(), subject:b.subject.trim(), event:b.event, action:b.action, message:b.message.trim()};
+          if (req.method === 'POST') {
+            rules.push({...values,id:rules.length+1,enabled:true});
+            return json(res,201,{});
+          }
+          if (!rule) return json(res,404,{error:'Regra não encontrada.'});
+          Object.assign(rule,values);
+          return json(res,200,{});
+        }
         if(req.method==='PATCH' && rule && typeof b.enabled==='boolean'){rule.enabled=b.enabled;return json(res,200,{});}
         return json(res,400,{error:'Regra inválida'});
       }

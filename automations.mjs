@@ -1,11 +1,20 @@
 import {readFile} from 'node:fs/promises';
 import {query, transaction} from './db.mjs';
+import defaults from './automation-defaults.mjs';
 
 const configured = () => Boolean(process.env.SMTP_USER && process.env.SMTP_PASSWORD);
 let ready;
 function prepare() {
   ready ??= readFile(new URL('./migrations/automations.sql', import.meta.url),'utf8')
-    .then(sql => query(sql)).catch(error => { ready = undefined; throw error; });
+    .then(sql => transaction(async client => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('crm-apito-automation-setup'))");
+      await client.query(sql);
+      await client.query(`INSERT INTO automation_rules(template_key,name,event,message,subject,action)
+        SELECT key,name,event,message,'Próxima ação','followup'
+        FROM jsonb_to_recordset($1::jsonb) AS template(key text,name text,event text,message text)
+        WHERE NOT EXISTS (SELECT 1 FROM automation_rules existing WHERE existing.template_key=template.key)
+        ON CONFLICT (template_key) DO NOTHING`, [JSON.stringify(defaults)]);
+    })).catch(error => { ready = undefined; throw error; });
   return ready;
 }
 export async function rulesApi(req,res,body,stages,json) {
@@ -19,11 +28,17 @@ export async function rulesApi(req,res,body,stages,json) {
     const result = await query('UPDATE automation_rules SET enabled=$1 WHERE id=$2',[body.enabled,body.id]);
     return json(res,result.rowCount ? 200 : 404,{});
   }
-  if (req.method !== 'POST' || !['email','followup'].includes(body?.action ?? 'email') || !['created',...stages].includes(body?.event) ||
+  if (!['POST','PUT'].includes(req.method) || !['email','followup'].includes(body?.action ?? 'email') || !['created',...stages].includes(body?.event) ||
     !['name','subject','message'].every(key => typeof body[key] === 'string' && body[key].trim()) ||
-    body.name.length>120 || body.subject.length>200 || body.message.length>8000 || /[\r\n]/.test(body.subject))
-    return json(res,400,{error:'Confira o gatilho, o nome e o conteúdo do email.'});
-  await query('INSERT INTO automation_rules(name,event,subject,message,action) VALUES($1,$2,$3,$4,$5)',[body.name.trim(),body.event,body.subject.trim(),body.message.trim(),body.action ?? 'email']);
+    body.name.length>120 || body.subject.length>200 || body.message.length>(body.action==='followup'?200:8000) || /[\r\n]/.test(body.subject))
+    return json(res,400,{error:'Confira o gatilho, o nome e o texto da ação.'});
+  const values = [body.name.trim(),body.event,body.subject.trim(),body.message.trim(),body.action ?? 'email'];
+  if (req.method === 'PUT') {
+    if (!Number.isSafeInteger(body.id)) return json(res,400,{error:'Identificador inválido.'});
+    const updated = await query('UPDATE automation_rules SET name=$1,event=$2,subject=$3,message=$4,action=$5 WHERE id=$6',[...values,body.id]);
+    return json(res,updated.rowCount ? 200 : 404,{});
+  }
+  await query('INSERT INTO automation_rules(name,event,subject,message,action) VALUES($1,$2,$3,$4,$5)',values);
   json(res,201,{});
 }
 export async function writeDeal(sql,params,id) {
@@ -37,11 +52,11 @@ export async function writeDeal(sql,params,id) {
     const event = old ? deal.stage : 'created';
     const rules = (await client.query('SELECT * FROM automation_rules WHERE enabled AND event=$1',[event])).rows;
     const jobs = [];
-    for (const rule of rules.sort((a,b)=>a.id-b.id)) {
+    for (const rule of rules.sort((a,b)=>Number(!a.template_key)-Number(!b.template_key) || a.id-b.id)) {
       const fill = value => value.replace(/{{(contato|negocio)}}/g,(_,key)=>key==='contato' ? deal.person || '' : deal.name);
       const recipient = deal.email?.trim();
       if (rule.action === 'followup') {
-        const next = fill(rule.message);
+        const next = fill(rule.message).slice(0,200);
         await client.query('UPDATE deals SET next_action=$1 WHERE id=$2',[next,deal.id]);
         await client.query('INSERT INTO automation_runs(rule_id,deal_id,subject,message,status) VALUES($1,$2,$3,$4,$5)',[rule.id,deal.id,rule.subject,next,'Próxima ação definida']);
         continue;

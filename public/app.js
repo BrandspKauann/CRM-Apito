@@ -710,9 +710,7 @@ content.addEventListener('pointerup', async event => {
     const res = await apiFetch('/api/deals/' + deal.id, { method: 'PATCH',
       headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stage }) });
     if (!res.ok) throw Error((await res.json()).error || 'Não foi possível mover o negócio.');
-    deal.stage = stage;
-    if (page === 'deals') renderRows();
-    if (page === 'home') draw();
+    await refresh();
   } catch (error) {
     $('#alert').textContent = error.message;
   } finally { movesInProgress.delete(deal.id); }
@@ -771,47 +769,108 @@ $('dialog form').onsubmit = async event => {
 };
 start();
 
-async function drawAutomations() {
+async function drawAutomations(notice = '') {
   const root = $('#content');
-  root.innerHTML = '<p>Carregando regras…</p>';
+  root.innerHTML = '<p role="status">Carregando automações…</p>';
+  async function request(method, body) {
+    const response = await apiFetch('/api/automations', {
+      method, headers: {'Content-Type': 'application/json'}, body: body && JSON.stringify(body)
+    });
+    const result = await response.json();
+    if (!response.ok) throw Error(result.error || 'Não foi possível atualizar as automações.');
+    return result;
+  }
   try {
-    const request = async (method, body) => {
-      const response = await apiFetch('/api/automations', {method,headers:{'Content-Type':'application/json'},body:body && JSON.stringify(body)});
-      if (!response.ok) throw Error('Não foi possível salvar ou carregar as regras.');
-      return response.json();
-    };
     const state = await request('GET');
     if (page !== 'automations') return;
-    const eventLabel = event => event === 'created' ? 'Negócio criado' : 'Negócio entrou em ' + event;
-    root.innerHTML = '<div class="automation-layout"><section><h2>Nova automação</h2><form><label>Nome da regra<input name="name" required maxlength="120" placeholder="Retorno após perda"></label><label>Quando acontecer<select name="event">' +
-      ['created',...data.stages].map(stage => '<option value="'+esc(stage)+'">'+esc(eventLabel(stage))+'</option>').join('')+
-      '</select></label><label>Ação<select name="action"><option value="followup">Definir próxima ação no negócio</option><option value="email">Enviar email ao contato</option></select></label><label><span data-subject>Assunto</span><input required name="subject" maxlength="200"></label><label><span data-message>Mensagem</span><textarea required name="message" maxlength="8000" rows="5"></textarea></label><small>Use {{contato}} e {{negocio}} para personalizar a mensagem.</small><button>Criar regra</button></form></section><section><h2>Regras do funil</h2>'+
-      (state.configured?'':'<p role="status">Configure o SMTP da Hostinger no servidor para habilitar os envios.</p>')+
-      (state.rules.map(rule=>'<article><strong>'+esc(rule.name)+'</strong><p>'+esc(eventLabel(rule.event))+' → '+(rule.action==='followup'?'Definir próxima ação':'Enviar email')+' · '+(rule.enabled?'Ativa':'Pausada')+'</p><button data-rule="'+rule.id+'">'+(rule.enabled?'Pausar':'Ativar')+'</button></article>').join('') || '<p>Nenhuma regra criada.</p>')+
-      '<h2>Execuções recentes</h2>'+(state.runs.map(run=>'<article><strong>'+esc(run.name)+'</strong><p>Negócio #'+esc(run.deal_id)+' · '+esc(run.status)+'</p><small>'+esc(new Date(run.created_at).toLocaleString('pt-BR'))+'</small></article>').join('') || '<p>As execuções aparecem aqui quando um gatilho ocorrer.</p>')+'</section></div>';
-    const save = async (button,method,body) => {
-      button.disabled=true;
-      try {await request(method,body); if(page==='automations') await drawAutomations();}
-      catch(error){button.disabled=false; $('#alert').textContent=error.message;}
-    };
-    const form = root.querySelector('form');
-    function showAction() {
-      const internal = form.elements.action.value === 'followup';
-      form.elements.subject.closest('label').hidden=internal;
-      form.elements.subject.required=!internal;
-      form.querySelector('[data-message]').textContent=internal?'Próxima ação':'Mensagem';
+    const eventLabel = event => event === 'created' ? 'Ao criar um negócio' : 'Ao entrar em ' + event;
+    function renderRule(rule) {
+      const email = rule.action === 'email';
+      return `<article class="automation-rule">
+        <div class="automation-rule-heading"><h3>${esc(rule.name)}</h3><span class="rule-state ${rule.enabled ? 'active' : ''}">${rule.enabled ? 'Ativa' : 'Pausada'}</span></div>
+        <p class="rule-event">${esc(eventLabel(rule.event))}</p>
+        <dl><dt>${email ? 'Enviar email ao contato' : 'Definir próxima ação'}</dt>
+        <dd>${email ? '<strong>'+esc(rule.subject)+'</strong><br>' : ''}${esc(rule.message)}</dd></dl>
+        <div class="rule-actions"><button type="button" data-edit-rule="${rule.id}">Editar</button>
+        <button type="button" data-toggle-rule="${rule.id}">${rule.enabled ? 'Pausar' : 'Ativar'}</button></div>
+      </article>`;
     }
-    form.elements.action.onchange=showAction;
-    showAction();
+    root.innerHTML = `<div class="automation-layout">
+      <section class="automation-rules"><h2>Regras do funil</h2>
+      <p class="automation-feedback" role="status">${esc(notice)}</p>
+      ${state.rules.map(renderRule).join('') || '<p>Nenhuma regra criada.</p>'}</section>
+      <section class="automation-editor"><h2 data-editor-title>Nova automação</h2>
+        <form>
+          <label>Nome da regra<input name="name" required maxlength="120" placeholder="Ex.: Acompanhar proposta"></label>
+          <label>Gatilho<select name="event">${['created', ...data.stages].map(event =>
+            '<option value="'+esc(event)+'">'+esc(eventLabel(event))+'</option>').join('')}</select></label>
+          <label>Ação<select name="action"><option value="followup">Definir próxima ação no negócio</option><option value="email">Enviar email ao contato</option></select></label>
+          <p data-smtp-warning hidden>Configure o SMTP da Hostinger para habilitar o envio de emails.</p>
+          <label hidden>Assunto<input name="subject" maxlength="200"></label>
+          <label><span data-message-label>Próxima ação</span><textarea name="message" required maxlength="200" rows="4" aria-describedby="rule-variables"></textarea></label>
+          <small id="rule-variables">Use {{negocio}} e {{contato}} para inserir os nomes do negócio e do contato.</small>
+          <div class="rule-actions"><button type="submit">Criar regra</button><button type="button" data-reset-rule hidden>Cancelar edição</button></div>
+        </form>
+      </section>
+      <section class="automation-history"><h2>Execuções recentes</h2>
+        ${state.runs.map(run => '<article><strong>'+esc(run.name)+'</strong><p>Negócio #'+esc(run.deal_id)+' · '+esc(run.status)+'</p><small>'+esc(new Date(run.created_at).toLocaleString('pt-BR'))+'</small></article>').join('') ||
+          '<p>O histórico aparece quando um negócio acionar uma regra.</p>'}
+      </section>
+    </div>`;
+    const form = root.querySelector('form');
+    const submit = form.querySelector('[type="submit"]');
+    const cancel = form.querySelector('[data-reset-rule]');
+    let editedId = null;
+    function showAction() {
+      const email = form.elements.action.value === 'email';
+      form.elements.subject.closest('label').hidden = !email;
+      form.elements.subject.required = email;
+      form.elements.message.maxLength = email ? 8000 : 200;
+      form.querySelector('[data-message-label]').textContent = email ? 'Mensagem' : 'Próxima ação';
+      form.querySelector('[data-smtp-warning]').hidden = !email || state.configured;
+    }
+    function editRule(rule) {
+      editedId = rule?.id ?? null;
+      form.reset();
+      if (rule) {
+        for (const field of ['name','event','action','subject','message']) form.elements[field].value = rule[field];
+      }
+      showAction();
+      root.querySelector('[data-editor-title]').textContent = rule ? 'Editar automação' : 'Nova automação';
+      submit.textContent = rule ? 'Salvar alterações' : 'Criar regra';
+      cancel.hidden = !rule;
+      form.elements.name.focus();
+    }
+    async function save(button,method,body,confirmation) {
+      button.disabled = true;
+      $('#alert').textContent = '';
+      try {
+        await request(method,body);
+        if (page === 'automations') await drawAutomations(confirmation);
+      } catch (error) {
+        button.disabled = false;
+        if (page === 'automations') $('#alert').textContent = error.message;
+      }
+    }
+    form.elements.action.onchange = showAction;
+    cancel.onclick = () => editRule(null);
     form.onsubmit = event => {
       event.preventDefault();
-      const body=Object.fromEntries(new FormData(form));
-      if(body.action==='followup') body.subject='Próxima ação';
-      save(form.querySelector('button'),'POST',body);
+      const body = Object.fromEntries(new FormData(form));
+      if (body.action === 'followup') body.subject = 'Próxima ação';
+      if (editedId !== null) body.id = editedId;
+      save(submit, editedId === null ? 'POST' : 'PUT', body, editedId === null ? 'Regra criada.' : 'Alterações salvas.');
     };
-    root.querySelectorAll('[data-rule]').forEach(button=>button.onclick=()=>{
-      const rule=state.rules.find(row=>row.id===Number(button.dataset.rule));
-      save(button,'PATCH',{id:rule.id,enabled:!rule.enabled});
+    root.querySelectorAll('[data-edit-rule]').forEach(button => {
+      button.onclick = () => editRule(state.rules.find(rule => rule.id === Number(button.dataset.editRule)));
     });
-  } catch(error) { if(page==='automations') root.textContent=error.message; }
+    root.querySelectorAll('[data-toggle-rule]').forEach(button => {
+      button.onclick = () => {
+        const rule = state.rules.find(item => item.id === Number(button.dataset.toggleRule));
+        save(button, 'PATCH', {id:rule.id, enabled:!rule.enabled}, rule.enabled ? 'Regra pausada.' : 'Regra ativada.');
+      };
+    });
+  } catch (error) {
+    if (page === 'automations') root.textContent = error.message;
+  }
 }
