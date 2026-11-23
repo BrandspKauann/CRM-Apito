@@ -19,6 +19,16 @@ const RecordRelationships = (() => {
     return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR').trim();
   }
 
+  function websiteDomain(website) {
+    if (typeof website !== 'string') return '';
+    const match = /^https:\/\/([a-z0-9.-]+)\/?$/i.exec(website);
+    if (!match || match[1].length > 253) return '';
+    const domain = match[1].toLowerCase();
+    const labels = domain.split('.');
+    if (labels.length < 2 || !/^[a-z]/.test(labels.at(-1))) return '';
+    return labels.every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label)) ? domain : '';
+  }
+
   function contactActions(fields) {
     const actions = element('div', 'rel-actions');
     const emailInput = fields.querySelector('[name=email]');
@@ -163,6 +173,16 @@ const RecordRelationships = (() => {
         groups.append(companySection, relationshipGroup('Negócios do contato', deals, 'deals',
           row => [row.stage, money(row.amount)].filter(Boolean).join(' · '), 'Nenhum negócio vinculado.', navigate));
       } else {
+        const domain = websiteDomain(record.website);
+        if (domain) {
+          const site = element('div', 'rel-copy');
+          const link = element('a', null, domain);
+          link.href = 'https://' + domain;
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+          site.append(element('small', null, 'Site inferido pelo domínio do e-mail'), link);
+          properties.append(site);
+        }
         const people = data.contacts.filter(row => row.company === record.id);
         const names = new Map(people.map(row => [row.id, row.name]));
         const deals = data.deals.filter(row => names.has(row.contact));
@@ -179,5 +199,5 @@ const RecordRelationships = (() => {
       fields.prepend(back);
     }
   }
-  return { mount };
+  return { mount, websiteDomain };
 })();

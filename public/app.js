@@ -73,7 +73,7 @@ function buildDirectory(records) {
     });
   }
   for (const row of records.companies) {
-    entries.set(row, { text: normalizeSearch([row.name, row.city].filter(Boolean).join(' ')), digits: '' });
+    entries.set(row, { text: normalizeSearch([row.name, row.city, RecordRelationships.websiteDomain(row.website)].filter(Boolean).join(' ')), digits: '' });
   }
   return { companies, contacts, contactCounts, entries };
 }
@@ -109,7 +109,7 @@ function directoryRows() {
 }
 function mountDirectoryFilter() {
   const searchBox = $('.search-box');
-  $('#search').placeholder = page === 'contacts' ? 'Nome, empresa, e-mail ou telefone' : 'Nome ou cidade';
+  $('#search').placeholder = page === 'contacts' ? 'Nome, empresa, e-mail ou telefone' : 'Nome, cidade ou domínio';
   searchBox.insertAdjacentHTML('afterend', '<label class="directory-filter"><span class="sr-only">Filtrar ' +
     pages[page].toLowerCase() + '</span><select id="directory-filter">' +
     directoryFilters[page].map(([value, label]) => '<option value="' + value + '">' + label + '</option>').join('') +
@@ -241,7 +241,7 @@ function dealContactLabel(deal) {
   return contact ? [contact.name, linked('companies', contact.company)].filter(Boolean).join(' · ') : '';
 }
 function summary(row, table) {
-  if (table === 'companies') return row.city || 'Cidade não informada';
+  if (table === 'companies') return [row.city, RecordRelationships.websiteDomain(row.website)].filter(Boolean).join(' · ') || 'Cidade não informada';
   if (table === 'contacts') {
     return [linked('companies', row.company), row.email, row.phone].filter(Boolean).join(' · ');
   }
@@ -324,7 +324,7 @@ function recordButton(row, table, variant = '', status) {
     const contacts = directory.contactCounts.get(row.id) || 0;
     return '<button ' + target + ' class="record company-row"><span class="company-mark">' +
       esc(initials(row.name)) + '</span><span class="company-row-name"><strong>' + esc(row.name) +
-      '</strong><small>' + esc(row.city || 'Cidade não informada') + '</small></span>' +
+      '</strong><small>' + esc(summary(row, table)) + '</small></span>' +
       '<span class="company-row-count">' + contacts + ' ' + (contacts === 1 ? 'contato' : 'contatos') +
       '</span>' + icon('chevron', 17) + '</button>';
   }
