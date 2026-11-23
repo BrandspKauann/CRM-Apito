@@ -12,14 +12,15 @@ WITH active_account AS (
   SELECT r.source_id, r.payload, coalesce(r.payload#>'{_embedded,contacts}','[]'::jsonb) AS people
   FROM kommo_import.records r JOIN active_account a USING(account_id)
   WHERE r.kind='leads' AND coalesce(r.payload->>'is_deleted','false') <> 'true'
-), evidence AS (
-  SELECT m.contact_id, 'Kommo' AS origin, l.source_id AS reference,
-    CASE l.payload->>'status_id' WHEN '142' THEN 'won' WHEN '143' THEN 'lost'
-      ELSE 'open' END AS outcome
+), lead_people AS MATERIALIZED (
+  SELECT l.source_id AS reference,p->>'id' AS original_contact,l.payload->>'status_id' AS status
   FROM leads l CROSS JOIN LATERAL jsonb_array_elements(l.people) p
-  JOIN source_map m ON m.source='kommo' AND m.source_id=p->>'id'
   WHERE l.payload->>'status_id' ~ '^[1-9][0-9]*$'
     AND (jsonb_array_length(l.people)=1 OR p->>'is_main'='true')
+), evidence AS (
+  SELECT m.contact_id, 'Kommo' AS origin, l.reference,
+    CASE l.status WHEN '142' THEN 'won' WHEN '143' THEN 'lost' ELSE 'open' END AS outcome
+  FROM lead_people l JOIN source_map m ON m.source='kommo' AND m.source_id=l.original_contact
   UNION ALL
   SELECT m.contact_id,'MeEventos',b.source_id::text,
     CASE lower(trim(b.attributes->>'status')) WHEN 'aprovado' THEN 'approved'
