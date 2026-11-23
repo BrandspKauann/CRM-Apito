@@ -35,11 +35,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 }
 .brand { display: inline-flex; align-items: center; gap: 11px; min-width: 0; }
 .sidebar .brand { margin: 0 5px 42px; }
-.brand-mark {
-  display: grid; place-items: center; flex: 0 0 43px; width: 43px; height: 43px;
-  border-radius: 13px; color: white; background: #b93242;
-}
-.brand-mark svg { width: 34px; height: 34px; }
+.apito-logo { display: block; width: 48px; height: 48px; flex: none; object-fit: contain; }
 .wordmark { font-size: 18px; line-height: 1.25; font-weight: 720; letter-spacing: -.8px; color: white; white-space: nowrap; }
 .wordmark i { font-family: Georgia, serif; font-size: .85em; font-weight: 400; }
 .wordmark > span { display: block; margin-top: 5px; font-size: 9px; font-weight: 650; letter-spacing: .19em; color: #d0bfc2; }
@@ -117,8 +113,7 @@ dialog form { padding: 24px; }
   .frame { display: block; }
   .sidebar { position: static; height: auto; overflow: visible; padding: 13px 16px 10px; }
   .sidebar .brand { margin: 0 0 12px; }
-  .brand-mark { flex-basis: 34px; width: 34px; height: 34px; border-radius: 10px; }
-  .brand-mark svg { width: 28px; height: 28px; }
+  .apito-logo { display: block; width: 48px; height: 48px; flex: none; object-fit: contain; }
   .wordmark { font-size: 16px; }
   .wordmark > span { margin-top: 2px; font-size: 8px; }
   .nav-label { display: none; }
