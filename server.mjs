@@ -1,3 +1,4 @@
+import {rulesApi,writeDeal} from './automations.mjs';
 import http from 'node:http';
 import {readFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
@@ -57,10 +58,12 @@ export async function handler(req, res) {
       return;
     }
     const match = /^\/api\/(companies|contacts|deals)(?:\/(\d+))?$/.exec(req.url);
-    if (!match) { json(res, 404, {error:'Recurso não encontrado'}); return; }
-    const [, table, id] = match;
+    const automation = req.url === '/api/automations';
+    if (automation && req.method === 'GET') return await rulesApi(req,res,null,stages,json);
+    if (!match && !automation) { json(res, 404, {error:'Recurso não encontrado'}); return; }
+    const [, table, id] = match || [];
     const moveDeal = table === 'deals' && id && req.method === 'PATCH';
-    if (!moveDeal && req.method !== (id ? 'PUT' : 'POST')) { json(res, 405, {error:'Método inválido'}); return; }
+    if (!automation && !moveDeal && req.method !== (id ? 'PUT' : 'POST')) { json(res, 405, {error:'Método inválido'}); return; }
     if (!req.headers['content-type']?.startsWith('application/json') || !sameOrigin(req)) {
       json(res, 403, {error:'Origem ou formato inválido'}); return;
     }
@@ -73,9 +76,10 @@ export async function handler(req, res) {
     let body;
     try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
     catch { json(res, 400, {error:'Dados inválidos'}); return; }
+    if (automation) return await rulesApi(req,res,body,stages,json);
     if (moveDeal) {
       if (!stages.includes(body?.stage)) { json(res, 400, {error:'Etapa inválida'}); return; }
-      const result = await query('UPDATE deals SET stage = $1 WHERE id = $2 RETURNING id, stage', [body.stage, id]);
+      const result = await writeDeal('UPDATE deals SET stage = $1 WHERE id = $2 RETURNING id, stage', [body.stage, id],id);
       if (!result.rowCount) { json(res, 404, {error:'Negócio não encontrado'}); return; }
       json(res, 200, result.rows[0]); return;
     }
@@ -102,7 +106,8 @@ export async function handler(req, res) {
     const sql = id
       ? `UPDATE ${table} SET ${cols.map((key, index) => key + ' = ' + placeholders[index]).join(', ')} WHERE id = $${cols.length + 1} RETURNING id`
       : `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING id`;
-    const result = await query(sql, id ? [...values, Number(id)] : values);
+    const params = id ? [...values, Number(id)] : values;
+    const result = table === 'deals' ? await writeDeal(sql,params,id) : await query(sql,params);
     if (!result.rowCount) { json(res, 404, {error:'Registro não encontrado'}); return; }
     json(res, id ? 200 : 201, {id:result.rows[0].id});
   } catch (error) {

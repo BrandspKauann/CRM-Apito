@@ -8,6 +8,7 @@
     "test": "node tests/auth.test.mjs && node tests/follow-up.test.mjs && node tests/kommo-sync.test.mjs && node tests/kommo-extended.test.mjs"
   },
   "dependencies": {
+    "nodemailer": "^7.0.12",
     "pg": "^8.15.0"
   },
   "engines": {

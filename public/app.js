@@ -4,6 +4,7 @@ const pages = {
   companies: 'Empresas',
   contacts: 'Contatos',
   deals: 'Funil de negócios',
+  automations: 'Automações',
   integrations: 'Integrações'
 };
 const singular = { companies: 'empresa', contacts: 'contato', deals: 'negócio' };
@@ -33,6 +34,7 @@ const iconPaths = {
 };
 // Solid silhouettes and a second ink for the five navigation emblems.
 const navEmblems = {
+  automations: '<path d="M14 1 3 14h8l-1 9L22 9h-9z"/>',
   home: '<path d="M2 21V3h20v18z"/><path class="ink-cut" d="M5 6h14v9H5z"/><path class="ink-accent" d="M6 13 9 8l3 3 5-4 2 6z"/><path class="ink-cut" d="M5 17h6v1H5z"/>',
   companies: '<path d="m2 7 12-5v19H2z"/><path class="ink-accent" d="m16 8 6 3v10h-6z"/><path class="ink-cut" d="M5 9h2v3H5zm5-2h2v3h-2zm-5 7h2v3H5zm5-2h2v3h-2zm-2 6h3v3H8zm10-5h2v3h-2z"/>',
   contacts: '<path class="ink-accent" d="m5 4 14-3 3 16-4 1V6H5z"/><path d="M2 7h16v15H2z"/><circle class="ink-cut" cx="10" cy="12" r="2.3"/><path class="ink-cut" d="M5.5 19c0-5.5 9-5.5 9 0z"/>',
@@ -452,16 +454,18 @@ function draw() {
     companies: 'Organize as empresas com quem você se relaciona.',
     contacts: 'Consulte telefones, e-mails e empresas vinculadas.',
     deals: 'Acompanhe cada oportunidade até o fechamento.',
+    automations: 'Defina o que acontece quando um negócio é criado ou muda de etapa.',
     integrations: 'Configure as conexões com Kommo e MeEventos.'
   })[page];
   $('#create').innerHTML = icon('plus', 18) + '<span>' +
     (page === 'companies' ? 'Nova empresa' : page === 'contacts' ? 'Novo contato' : 'Novo negócio') +
     '</span>';
-  $('#create').hidden = page === 'integrations';
+  $('#create').hidden = ['integrations','automations'].includes(page);
   $('#alert').textContent = '';
   $('#content').className = page === 'home' ? 'dashboard-view' :
     page === 'integrations' ? 'integrations-view' : 'records-view';
   document.title = pages[page] + ' | CRM Apito de Mestre';
+  if (page === 'automations') { drawAutomations(); return; }
   if (page === 'integrations') { drawIntegrations(); return; }
   if (page === 'home') { drawHome(); return; }
   $('#content').innerHTML = '<div class="records-toolbar"><label class="search-box">' +
@@ -766,3 +770,37 @@ $('dialog form').onsubmit = async event => {
   }
 };
 start();
+
+async function drawAutomations() {
+  const root = $('#content');
+  root.innerHTML = '<p>Carregando regras…</p>';
+  try {
+    const request = async (method, body) => {
+      const response = await apiFetch('/api/automations', {method,headers:{'Content-Type':'application/json'},body:body && JSON.stringify(body)});
+      if (!response.ok) throw Error('Não foi possível salvar ou carregar as regras.');
+      return response.json();
+    };
+    const state = await request('GET');
+    if (page !== 'automations') return;
+    const eventLabel = event => event === 'created' ? 'Negócio criado' : 'Negócio entrou em ' + event;
+    root.innerHTML = '<div class="automation-layout"><section><h2>Nova automação</h2><form><label>Nome da regra<input name="name" required maxlength="120" placeholder="Retorno após perda"></label><label>Quando acontecer<select name="event">' +
+      ['created',...data.stages].map(stage => '<option value="'+esc(stage)+'">'+esc(eventLabel(stage))+'</option>').join('')+
+      '</select></label><h3>Enviar email ao contato do negócio</h3><label>Assunto<input required name="subject" maxlength="200"></label><label>Mensagem<textarea required name="message" maxlength="8000" rows="5"></textarea></label><small>Use {{contato}} e {{negocio}} para personalizar a mensagem.</small><button>Criar regra</button></form></section><section><h2>Regras do funil</h2>'+
+      (state.configured?'':'<p role="status">Configure o SMTP da Hostinger no servidor para habilitar os envios.</p>')+
+      (state.rules.map(rule=>'<article><strong>'+esc(rule.name)+'</strong><p>'+esc(eventLabel(rule.event))+' · '+(rule.enabled?'Ativa':'Pausada')+'</p><button data-rule="'+rule.id+'">'+(rule.enabled?'Pausar':'Ativar')+'</button></article>').join('') || '<p>Nenhuma regra criada.</p>')+
+      '<h2>Execuções recentes</h2>'+(state.runs.map(run=>'<article><strong>'+esc(run.name)+'</strong><p>Negócio #'+esc(run.deal_id)+' · '+esc(run.status)+'</p><small>'+esc(new Date(run.created_at).toLocaleString('pt-BR'))+'</small></article>').join('') || '<p>As execuções aparecem aqui quando um gatilho ocorrer.</p>')+'</section></div>';
+    const save = async (button,method,body) => {
+      button.disabled=true;
+      try {await request(method,body); if(page==='automations') await drawAutomations();}
+      catch(error){button.disabled=false; $('#alert').textContent=error.message;}
+    };
+    root.querySelector('form').onsubmit = event => {
+      event.preventDefault();
+      save(event.currentTarget.querySelector('button'),'POST',Object.fromEntries(new FormData(event.currentTarget)));
+    };
+    root.querySelectorAll('[data-rule]').forEach(button=>button.onclick=()=>{
+      const rule=state.rules.find(row=>row.id===Number(button.dataset.rule));
+      save(button,'PATCH',{id:rule.id,enabled:!rule.enabled});
+    });
+  } catch(error) { if(page==='automations') root.textContent=error.message; }
+}
