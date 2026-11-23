@@ -3,7 +3,8 @@ import http from 'node:http';
 import {readFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {resolve} from 'node:path';
-import {query} from './db.mjs';
+import {query, transaction} from './db.mjs';
+import {commercialHistorySql, attachCommercialHistory} from './commercial-history.mjs';
 import {handleAuth, requireAuth} from './auth.mjs';
 import {handleIntegration} from './integrations.mjs';
 import {followUpError, writableFields} from './follow-up.mjs';
@@ -50,6 +51,19 @@ export async function handler(req, res) {
     }
     if (!requireAuth(req, res)) return;
     if (await handleIntegration(req, res)) return;
+    if (req.method === 'GET' && req.url === '/api/commercial-history') {
+      const imported = await query("SELECT to_regclass('crm_enrichment.crm_contact_sources') IS NOT NULL AND to_regclass('crm_enrichment.meeventos_crosswalk') IS NOT NULL AND to_regclass('kommo_import.sync_state') IS NOT NULL AS available");
+      const evidence = imported.rows[0].available ? await transaction(async client => {
+        await client.query("SET LOCAL statement_timeout='12s'");
+        await client.query('SET LOCAL jit=off');
+        await client.query('SET LOCAL enable_nestloop=off');
+        return (await client.query(commercialHistorySql)).rows;
+      }) : [];
+      const contacts = [...new Set(evidence.map(row => row.contact_id))].map(id => ({id}));
+      attachCommercialHistory(contacts, evidence);
+      json(res, 200, contacts);
+      return;
+    }
     if (req.method === 'GET' && req.url === '/api/crm') {
       const data = {stages};
       const results = await Promise.all(Object.keys(fields).map(table => query(`SELECT * FROM ${table} ORDER BY id DESC`)));
