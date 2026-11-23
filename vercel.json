@@ -5,7 +5,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "/api/index.js?__crm_path=:path*"
+      "destination": "/api/[...]"
     }
   ],
   "headers": [
