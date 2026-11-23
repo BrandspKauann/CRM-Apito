@@ -53,7 +53,8 @@ export async function handler(req, res) {
     const match = /^\/api\/(companies|contacts|deals)(?:\/(\d+))?$/.exec(req.url);
     if (!match) { json(res, 404, {error:'Recurso não encontrado'}); return; }
     const [, table, id] = match;
-    if (req.method !== (id ? 'PUT' : 'POST')) { json(res, 405, {error:'Método inválido'}); return; }
+    const moveDeal = table === 'deals' && id && req.method === 'PATCH';
+    if (!moveDeal && req.method !== (id ? 'PUT' : 'POST')) { json(res, 405, {error:'Método inválido'}); return; }
     if (!req.headers['content-type']?.startsWith('application/json') || !sameOrigin(req)) {
       json(res, 403, {error:'Origem ou formato inválido'}); return;
     }
@@ -66,6 +67,12 @@ export async function handler(req, res) {
     let body;
     try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
     catch { json(res, 400, {error:'Dados inválidos'}); return; }
+    if (moveDeal) {
+      if (!stages.includes(body?.stage)) { json(res, 400, {error:'Etapa inválida'}); return; }
+      const result = await query('UPDATE deals SET stage = $1 WHERE id = $2 RETURNING id, stage', [body.stage, id]);
+      if (!result.rowCount) { json(res, 404, {error:'Negócio não encontrado'}); return; }
+      json(res, 200, result.rows[0]); return;
+    }
     if (!body || typeof body.name !== 'string' || !body.name.trim()) {
       json(res, 400, {error:'Informe um nome'}); return;
     }

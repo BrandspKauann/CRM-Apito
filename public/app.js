@@ -188,7 +188,7 @@ function renderRows() {
     target.innerHTML = data.stages.map(stage => {
       const current = rows.filter(row => row.stage === stage);
       const total = current.reduce((sum, row) => sum + Number(row.amount || 0), 0);
-      return '<article class="stage-column"><div class="stage-column-header"><div class="stage-column-title">' +
+      return '<article class="stage-column" data-stage="' + esc(stage) + '"><div class="stage-column-header"><div class="stage-column-title">' +
         '<span class="stage-dot ' + stageTone(stage) + '"></span><h2>' + esc(stage) +
         '</h2><span class="stage-count">' + current.length + '</span></div><small>' + money(total) +
         '</small></div><div class="stage-column-body">' +
@@ -418,6 +418,25 @@ function form(table, id) {
     }
     return '<label>' + labels[key] + input + '</label>';
   }).join('');
+  if (table === 'deals') {
+    const contactSelect = $('#fields select[name="contact"]');
+    const details = document.createElement('section');
+    details.className = 'linked-contact';
+    contactSelect.closest('label').after(details);
+    function showContact() {
+      const contact = data.contacts.find(item => String(item.id) === contactSelect.value);
+      const entries = contact ? [
+        ['Empresa', linked('companies', contact.company)], ['E-mail', contact.email], ['Telefone', contact.phone]
+      ] : [];
+      details.innerHTML = contact
+        ? '<h3>' + esc(contact.name) + '</h3><dl>' + entries.map(([label, value]) =>
+          '<div><dt>' + label + '</dt><dd>' + esc(value || 'Não informado') + '</dd></div>').join('') + '</dl>'
+        : '<p>Selecione um contato para ver os dados dele aqui.</p>';
+    }
+    contactSelect.onchange = showContact;
+    showContact();
+    if (id) $('#modalTitle').textContent = row.name;
+  }
   $('#error').textContent = '';
   $('dialog').showModal();
 }
@@ -432,6 +451,66 @@ $('nav').onclick = event => {
   if (button) changePage(button.dataset.page);
 };
 $('#create').onclick = () => { if (data) form(page === 'home' ? 'deals' : page); };
+const movesInProgress = new Set();
+let gesture = null;
+function endGesture() {
+  if (!gesture) return;
+  gesture.card.classList.remove('dragging');
+  gesture.column?.classList.remove('drop-target');
+  gesture = null;
+}
+const content = $('#content');
+content.addEventListener('pointerdown', event => {
+  const card = event.target.closest('.deal-card');
+  if (!card || !event.isPrimary || event.button !== 0 || movesInProgress.has(Number(card.dataset.id))) return;
+  gesture = { card, pointer: event.pointerId, x: event.clientX, y: event.clientY, moving: false, column: null };
+  card.setPointerCapture(event.pointerId);
+});
+function dropColumn(event) {
+  return document.elementFromPoint(event.clientX, event.clientY)?.closest('[data-stage]');
+}
+content.addEventListener('pointermove', event => {
+  if (!gesture || gesture.pointer !== event.pointerId) return;
+  if (!gesture.moving && Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) < 7) return;
+  gesture.moving = true;
+  gesture.card.classList.add('dragging');
+  const board = gesture.card.closest('.board');
+  const bounds = board.getBoundingClientRect();
+  if (event.clientX > bounds.right - 40) board.scrollLeft += 28;
+  if (event.clientX < bounds.left + 40) board.scrollLeft -= 28;
+  gesture.column?.classList.remove('drop-target');
+  gesture.column = dropColumn(event);
+  gesture.column?.classList.add('drop-target');
+});
+content.addEventListener('lostpointercapture', endGesture);
+content.addEventListener('pointercancel', endGesture);
+content.addEventListener('pointerup', async event => {
+  if (!gesture || gesture.pointer !== event.pointerId) return;
+  const { card, moving } = gesture;
+  const column = dropColumn(event);
+  endGesture();
+  if (!moving) return;
+  // The browser dispatches a click immediately after pointerup, including after a drag.
+  const suppress = click => { click.preventDefault(); click.stopImmediatePropagation(); };
+  card.addEventListener('click', suppress, { once: true, capture: true });
+  setTimeout(() => card.removeEventListener('click', suppress, true), 0);
+  if (!column) return;
+  const deal = data.deals.find(item => item.id === Number(card.dataset.id));
+  const stage = column.dataset.stage;
+  if (!deal || deal.stage === stage || movesInProgress.has(deal.id)) return;
+  movesInProgress.add(deal.id);
+  $('#alert').textContent = '';
+  try {
+    const res = await apiFetch('/api/deals/' + deal.id, { method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stage }) });
+    if (!res.ok) throw Error((await res.json()).error || 'Não foi possível mover o negócio.');
+    deal.stage = stage;
+    if (page === 'deals') renderRows();
+    if (page === 'home') draw();
+  } catch (error) {
+    $('#alert').textContent = error.message;
+  } finally { movesInProgress.delete(deal.id); }
+});
 $('#content').addEventListener('click', async event => {
   const link = event.target.closest('[data-go]');
   if (link) { changePage(link.dataset.go); return; }

@@ -798,3 +798,15 @@
     transition: none;
   }
 }
+
+#content .deal-card { cursor: grab; user-select: none; touch-action: none; }
+#content .dragging { opacity: .5; cursor: grabbing; }
+#content .stage-column { min-height: 175px; }
+#content .drop-target { outline: 2px solid var(--accent); outline-offset: -2px; background: #fff4f1; }
+.linked-contact { padding: 12px 14px; background: #f8f4ef; border-left: 3px solid var(--accent); border-radius: 5px; }
+.linked-contact h3 { font-size: 15px; margin: 0 0 6px; }
+.linked-contact dl { margin: 0; }
+.linked-contact dl div { display: grid; grid-template-columns: 64px minmax(0,1fr); gap: 8px; padding: 2px 0; }
+.linked-contact dt,.linked-contact p { color: var(--muted); }
+.linked-contact dd { margin: 0; overflow-wrap: anywhere; }
+.linked-contact { font-size: 13px; }
