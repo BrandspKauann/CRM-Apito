@@ -16,7 +16,8 @@ test('as regras internas acompanham o funil, respeitam edição e pausa', async 
   }
   const {rules} = await api('automations');
   assert.equal(rules.length,5);
-  const {id} = await api('deals','POST',{name:'Evento',amount:0,stage:'Prospecção'});
+  const company = await api('companies','POST',{name:'Empresa de teste',city:''});
+  const {id} = await api('deals','POST',{name:'Evento',company:company.id,amount:0,stage:'Prospecção'});
   for (const template of defaults) {
     if (template.event !== 'created') await api('deals/'+id,'PATCH',{stage:template.event});
     const {deals} = await api('crm');
@@ -32,4 +33,16 @@ test('as regras internas acompanham o funil, respeitam edição e pausa', async 
   await api('deals/'+id,'PATCH',{stage:'Prospecção'});
   await api('deals/'+id,'PATCH',{stage:'Proposta'});
   assert.equal((await api('automations')).runs.length,6);
+  const baseDeal = {name:'Evento',stage:'Prospecção',amount:0};
+  for (const [path, method] of [['deals','POST'], ['deals/'+id,'PUT']]) {
+    const invalid = await fetch(base+path,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(baseDeal)});
+    assert.equal(invalid.status,400);
+  }
+  const contact = await api('contacts','POST',{name:'Contato de teste'});
+  await api('deals/'+id,'PUT',{...baseDeal,contact:contact.id});
+  await api('deals/'+id,'DELETE');
+  const crm = await api('crm');
+  assert.equal(crm.deals.length,0);
+  assert.equal(crm.contacts.length,1);
+  assert.equal(crm.companies.length,1);
 });

@@ -6,13 +6,14 @@ import { followUpError, writableFields } from '../follow-up.mjs';
 import defaults from '../automation-defaults.mjs';
 
 const root = fileURLToPath(new URL('../public/', import.meta.url));
-const stages = ['Prospecção', 'Em contato', 'Proposta', 'Ganho', 'Perdido'];
+const stages = ['Prospecção', 'Em contato', 'Proposta', 'Perdido', 'Ganho', 'Clientes', 'Finalizado sem desfecho', 'Orçamento aprovado'];
 const tables = { companies: [], contacts: [], deals: [] };
 const rules = defaults.map(({name, event, message}, index) => ({
   id: index + 1, name, event, message,
   enabled: true, action: 'followup', subject: 'Próxima ação',
 }));
 const runs = [];
+const lists = [], segmentEvents = [];
 function trigger(deal,event) {
   for (const rule of rules.filter(rule=>rule.enabled && rule.event===event)) {
     if (rule.action==='followup') {
@@ -24,7 +25,7 @@ function trigger(deal,event) {
 }
 const fields = {
   companies: ['name', 'city'], contacts: ['name', 'company', 'email', 'phone'],
-  deals: ['name', 'contact', 'amount', 'stage', 'notes', 'next_action', 'follow_up_on'],
+  deals: ['name', 'contact', 'company', 'amount', 'stage', 'notes', 'next_action', 'follow_up_on'],
 };
 const types = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml' };
 const emptySettings = { connected: false, baseUrl: '' };
@@ -41,6 +42,10 @@ async function save(req, res, table, id) {
   const rows = tables[table];
   const row = id ? rows.find(item => item.id === Number(id)) : {};
   if (!row) return json(res, 404, { error: 'Registro não encontrado.' });
+  if (req.method === 'DELETE') {
+    rows.splice(rows.indexOf(row), 1);
+    return json(res, 200, {id:row.id});
+  }
   const chunks = [];
   let size = 0;
   for await (const chunk of req) {
@@ -53,12 +58,13 @@ async function save(req, res, table, id) {
     if (!stages.includes(body?.stage)) return json(res, 400, { error: 'Etapa inválida.' });
     const changed=row.stage!==body.stage;
     row.stage = body.stage;
+    if (changed) addEvent(row,false);
     if(changed) trigger(row,row.stage);
     return json(res, 200, { id: row.id, stage: row.stage });
   }
   if (!body || typeof body.name !== 'string' || !body.name.trim()) return json(res, 400, { error: 'Informe o nome.' });
   if (table === 'deals') {
-    const error = followUpError(body);
+    const error = (!body.contact && !body.company) ? 'Vincule a oportunidade a um contato ou a uma empresa.' : followUpError(body);
     if (error) return json(res, 400, { error });
   }
   const values = Object.fromEntries(writableFields(fields[table], body, Boolean(id)).map(key => {
@@ -69,16 +75,28 @@ async function save(req, res, table, id) {
   }));
   if (table === 'deals' && (!stages.includes(values.stage) || values.amount < 0 || !Number.isFinite(values.amount)))
     return json(res, 400, { error: 'Verifique a etapa e o valor.' });
+  if (table === 'deals' && [['contact','contacts'],['company','companies']].some(([key, source]) =>
+    body[key] && !tables[source].some(link => link.id === Number(body[key]))))
+    return json(res, 400, {error:'Vínculo inválido.'});
   const previous=row.stage;
   Object.assign(row, values);
   if (!id) {
     row.id = Math.max(0, ...rows.map(item => item.id)) + 1;
     rows.unshift(row);
   }
-  if(table==='deals' && (!id || previous!==row.stage)) trigger(row,id?row.stage:'created');
+  if(table==='deals' && (!id || previous!==row.stage)) {
+    addEvent(row,!id);
+    trigger(row,id?row.stage:'created');
+  }
   return json(res, id ? 200 : 201, { id: row.id });
 }
 
+function addEvent(row,created) {
+  const day = new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+  const outcome = {Ganho:'won',Clientes:'won',Perdido:'lost','Orçamento aprovado':'approved'}[row.stage];
+  for (const kind of [created && 'created',outcome].filter(Boolean))
+    segmentEvents.push({deal:row,origin:'CRM Apito',reference:String(row.id),kind,day});
+}
 const port = Number(process.env.CRM_PREVIEW_PORT || 4318);
 export const server = http.createServer(async (req, res) => {
   try {
@@ -93,6 +111,18 @@ export const server = http.createServer(async (req, res) => {
         return json(res, 200, { ok: true }, { 'Set-Cookie': cookie + '; HttpOnly; SameSite=Strict; Path=/' });
       }
       if (!authenticated) return json(res, 401, { error: 'Entre na prévia.' });
+      if(path==='/api/contact-segments') {
+        if(req.method==='GET') return json(res,200,{lists,events:segmentEvents.filter(e=>tables.deals.includes(e.deal) && e.deal.contact)
+          .map(({deal,...event})=>({...event,contact_id:deal.contact}))});
+        if(req.method!=='POST') return json(res,405,{});
+        if(req.headers.origin && new URL(req.headers.origin).host!==req.headers.host) return json(res,403,{});
+        let raw=''; for await(const chunk of req){raw+=chunk;if(raw.length>32000)return json(res,413,{});}
+        const body=JSON.parse(raw);
+        if(!body.name?.trim() || !body.criteria) return json(res,400,{error:'Lista inválida.'});
+        if(lists.some(l=>l.name===body.name.trim()))return json(res,409,{error:'Já existe uma lista com esse nome.'});
+        const list={id:lists.length+1,name:body.name.trim(),criteria:body.criteria};lists.push(list);
+        return json(res,201,list);
+      }
       if(path==='/api/automations'){
         if(req.method==='GET') return json(res,200,{rules,runs:runs.slice(0,50),configured:false});
         if(req.headers.origin && new URL(req.headers.origin).host!==req.headers.host) return json(res,403,{});
@@ -121,7 +151,7 @@ export const server = http.createServer(async (req, res) => {
       if (path === '/api/integrations') return json(res, 200, { kommo: emptySettings, meeventos: emptySettings });
       const match = /^\/api\/(companies|contacts|deals)(?:\/(\d+))?$/u.exec(path);
       if (match && (req.method === (match[2] ? 'PUT' : 'POST') ||
-          (match[1] === 'deals' && match[2] && req.method === 'PATCH'))) return await save(req, res, match[1], match[2]);
+          (match[1] === 'deals' && match[2] && ['PATCH','DELETE'].includes(req.method)))) return await save(req, res, match[1], match[2]);
       return json(res, 501, { error: 'A consulta a serviços externos está desativada nesta prévia.' });
     }
     const file = resolve(root, '.' + (path === '/' ? '/index.html' : path));

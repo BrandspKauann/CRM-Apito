@@ -1,5 +1,5 @@
 // Each outcome keeps its original system and record ID. A shared employer never identifies a buyer.
-export const commercialHistorySql = `
+const sourceSql = `
 WITH active_account AS (
   SELECT s.account_id FROM kommo_import.sync_state s
   JOIN public.integration_configs i ON i.provider='kommo' AND rtrim(i.base_url,'/')=rtrim(s.cursor->>'origin','/')
@@ -13,11 +13,13 @@ WITH active_account AS (
   FROM kommo_import.records r JOIN active_account a USING(account_id)
   WHERE r.kind='leads' AND coalesce(r.payload->>'is_deleted','false') <> 'true'
 ), lead_people AS MATERIALIZED (
-  SELECT l.source_id AS reference,p->>'id' AS original_contact,l.payload->>'status_id' AS status
+  SELECT l.source_id AS reference,p->>'id' AS original_contact,l.payload->>'status_id' AS status, l.payload
   FROM leads l CROSS JOIN LATERAL jsonb_array_elements(l.people) p
   WHERE l.payload->>'status_id' ~ '^[1-9][0-9]*$'
     AND (jsonb_array_length(l.people)=1 OR p->>'is_main'='true')
-), evidence AS (
+)`;
+
+export const commercialHistorySql = sourceSql + `, evidence AS (
   SELECT m.contact_id, 'Kommo' AS origin, l.reference,
     CASE l.status WHEN '142' THEN 'won' WHEN '143' THEN 'lost' ELSE 'open' END AS outcome
   FROM lead_people l JOIN source_map m ON m.source='kommo' AND m.source_id=l.original_contact
@@ -56,3 +58,40 @@ export function attachCommercialHistory(contacts, records) {
         !tags.includes(commercialLabels.approved)) tags.push('Perda sem fechamento identificado');
   }
 }
+
+// Dates belong to individual source events. An event date or a last edit cannot date a sale.
+export const segmentHistorySql = sourceSql + `, matched AS (
+  SELECT m.contact_id,l.* FROM lead_people l JOIN source_map m
+  ON m.source='kommo' AND m.source_id=l.original_contact
+), events AS (
+  SELECT contact_id,'Kommo' AS origin,reference,e.kind,
+    CASE WHEN e.stamp ~ '^[1-9][0-9]{0,9}$' THEN
+      to_char(to_timestamp(e.stamp::bigint) AT TIME ZONE 'America/Sao_Paulo','YYYY-MM-DD') END AS day
+  FROM matched CROSS JOIN LATERAL (VALUES ('created',payload->>'created_at'),
+    (CASE status WHEN '142' THEN 'won' WHEN '143' THEN 'lost' END,payload->>'closed_at')) e(kind,stamp)
+  WHERE e.kind IS NOT NULL
+  UNION
+  SELECT m.contact_id,'Kommo',m.reference,
+    CASE r.payload#>>'{value_after,0,lead_status,id}' WHEN '142' THEN 'won' WHEN '143' THEN 'lost' END,
+    to_char(to_timestamp((r.payload->>'created_at')::bigint) AT TIME ZONE 'America/Sao_Paulo','YYYY-MM-DD')
+  FROM kommo_import.records r JOIN active_account a USING(account_id)
+  JOIN matched m ON m.reference=r.payload->>'entity_id'
+  WHERE r.kind='events' AND r.payload->>'type'='lead_status_changed'
+    AND r.payload#>>'{value_after,0,lead_status,id}' IN ('142','143')
+    AND r.payload->>'created_at' ~ '^[1-9][0-9]{0,9}$'
+  UNION
+  SELECT m.contact_id,'MeEventos',b.source_id::text,e.kind,
+    CASE WHEN e.stamp ~ '^[1-9][0-9]{3}-[0-9]{2}-[0-9]{2}($|[ T])' THEN left(e.stamp,10) END
+  FROM crm_enrichment.meeventos_crosswalk b JOIN active_account a USING(account_id)
+  JOIN source_map m ON m.source='budgets' AND m.source_id=b.source_id::text
+  CROSS JOIN LATERAL (VALUES ('created',b.attributes->>'dataCadastro'),
+    ('event',coalesce(b.attributes->>'dataevento',b.attributes->>'event_date')),
+    (CASE lower(trim(b.attributes->>'status')) WHEN 'aprovado' THEN 'approved'
+       WHEN 'perdido' THEN 'lost' WHEN 'recusado' THEN 'lost' END,
+     CASE lower(trim(b.attributes->>'status')) WHEN 'aprovado' THEN b.attributes->>'dataAprovacao'
+       WHEN 'perdido' THEN b.attributes->>'dataPerda' WHEN 'recusado' THEN b.attributes->>'dataRecusa' END)
+  ) e(kind,stamp)
+  WHERE b.source_type='budgets' AND b.match_result <> 'revisar_multiplos' AND e.kind IS NOT NULL
+    AND (e.kind <> 'event' OR e.stamp IS NOT NULL)
+)
+SELECT DISTINCT contact_id,origin,reference,kind,day FROM events`;
