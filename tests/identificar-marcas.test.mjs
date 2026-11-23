@@ -31,3 +31,21 @@ test('recusa IPs privados, especiais e parâmetros de URL fornecidos como domín
   assert.equal(await identifyBrand('127.0.0.1'),null);
   assert.equal(await identifyBrand('https://example.net@localhost'),null);
 });
+
+test('marca divergente exige duas confirmações e vínculo lexical distintivo', () => {
+  const domain = 'miravela.example';
+  const page = 'https://miravela.example/perfil/ana?chave=privada';
+  const meta = name => '<meta property="og:site_name" content="'+name+'">';
+  const org = (name,url=page.split('/perfil')[0]) => '<script type="application/ld+json">'+
+    JSON.stringify({'@type':'Organization',name,url})+'</script>';
+  const name = 'Miravela Design';
+  const full = brandFromHtml(domain,meta(name)+org(name),page);
+  assert.equal(full.name,name);
+  assert.equal(full.source,'https://miravela.example/#json-ld+og:site_name');
+  assert.equal(brandFromHtml(domain,meta(name)+meta(name),page),null);
+  assert.equal(brandFromHtml(domain,meta(name)+org(name,'https://outro.example/'),page),null);
+  assert.equal(brandFromHtml(domain,meta('Outra Empresa')+org('Outra Empresa'),page),null);
+  assert.equal(brandFromHtml(domain,meta('Miravela WordPress')+org('Miravela WordPress'),page),null);
+  assert.equal(brandFromHtml('agencia.example',meta('Agência Design')+'<title>Agência Design</title>',page),null);
+  assert.equal(brandFromHtml(domain,meta(name)+'<title>'+name+'</title>',page).name,name);
+});

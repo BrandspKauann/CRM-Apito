@@ -30,6 +30,21 @@ function entityText(value) {
 }
 
 const compact = value => value.normalize('NFD').replace(/\p{M}/gu,'').toLowerCase().replace(/[^a-z0-9]/g,'');
+const genericWords = new Set(('agencia brasil brazil central centro clinica comercio comercial companhia company consultoria ' +
+  'corporate digital eventos empresa empresaonline global grupo group holding home industria industrial instituto internacional ' +
+  'loja marketing nacional oficial online portal producoes produtos saude servicos sistemas site solucoes tecnologia transportes ' +
+  'website welcome wordpress hospedagem encontre acesse conheca bem vindo inicial pagina').split(' '));
+const platform = /\b(?:wordpress|wix|wixsite|squarespace|shopify|godaddy|sedo|hostinger|cpanel|plesk|webflow|namecheap|domainmarket|afternic|hugedomains|lorem ipsum)\b/i;
+
+function corroboratedStem(name,stem) {
+  if (platform.test(name) || /[|!?;:#]/.test(name)) return false;
+  const words = name.normalize('NFD').replace(/\p{M}/gu,'').toLowerCase().match(/[a-z0-9]+/g) || [];
+  if (words.length > 7) return false;
+  const brand = compact(name);
+  return words.some(word => word.length >= 4 && !genericWords.has(word) &&
+    /[a-z]/.test(word) && stem.includes(word) &&
+    (word.length >= stem.length * 0.55 || (stem.length >= 5 && brand.includes(stem))));
+}
 
 // Require a source spelling of the domain's brand. Never guess where to split words.
 export function brandFromHtml(domain, html, pageUrl) {
@@ -48,14 +63,17 @@ export function brandFromHtml(domain, html, pageUrl) {
     for (const node of nodes) {
       const types = [node?.['@type']].flat();
       if (!types.some(t => t === 'WebSite' || t === 'Organization') || typeof node.name !== 'string') continue;
+      let canonicalOrg = false;
       if (node.url) {
         try {
           const ref = new URL(node.url,pageUrl);
           if (!['https:', 'http:'].includes(ref.protocol) ||
               ![domain,'www.'+domain].includes(ref.hostname)) continue;
+          canonicalOrg = types.includes('Organization') && /^https?:\/\//i.test(node.url) &&
+            ref.pathname === '/' && !ref.search && !ref.username && !ref.password;
         } catch { continue; }
       }
-      candidates.push([entityText(node.name), 'json-ld']);
+      candidates.push([entityText(node.name), 'json-ld', canonicalOrg]);
     }
   }
   for (const [tag] of clean.matchAll(/<meta\s+(?:"[^"]*"|'[^']*'|[^'">])*>/gi)) {
@@ -70,12 +88,25 @@ export function brandFromHtml(domain, html, pageUrl) {
   for (const [part] of title.matchAll(/[^|•–—]+/g)) {
     for (const piece of part.split(/\s+-\s+|\s+:\s+/)) candidates.push([piece.trim(),'title']);
   }
-  for (const [name,signal] of candidates) {
+  const corroboration = new Map();
+  const origin = new URL(pageUrl).origin;
+  for (const [name,signal,canonicalOrg] of candidates) {
     if (!name || name.length > 90 || /[<>@/\\=\p{Cf}\p{Cc}]/u.test(name) ||
         /\b(?:com\.br|\.com)\b/i.test(name) || !/\p{L}/u.test(name)) continue;
-    if (compact(name) === stem) return {name,source:pageUrl+'#'+signal};
+    if (compact(name) === stem) return {name,source:origin+'/#'+signal};
+    if (!corroboratedStem(name,stem)) continue;
+    // Agreement must include the same words and boundaries. Duplicated tags count only once.
+    const key = name.normalize('NFC').toLocaleLowerCase('pt-BR');
+    const entry = corroboration.get(key) || {name,signals:new Set(),canonicalOrg:false};
+    entry.signals.add(signal);
+    entry.canonicalOrg ||= Boolean(canonicalOrg);
+    corroboration.set(key,entry);
   }
-  return null;
+  const matches = [...corroboration.values()].filter(({signals,canonicalOrg}) =>
+    signals.size >= 2 && (canonicalOrg || (signals.has('og:site_name') && signals.has('title'))));
+  if (matches.length !== 1) return null;
+  const [match] = matches;
+  return {name:match.name,source:origin+'/#'+[...match.signals].sort().join('+')};
 }
 
 async function publicPage(url, signal) {
@@ -134,12 +165,19 @@ export async function identifyBrand(domain) {
   const host = String(domain).trim().toLowerCase();
   if (host.length > 253 || !domainPattern.test(host)) return null;
   const signal = AbortSignal.timeout(4500);
+  const visited = new Set();
   for (const initial of [host,'www.'+host]) {
     let url = new URL('https://'+initial+'/');
     try {
       for (let step=0; step<4; step++) {
+        if (visited.has(url.href)) break;
+        visited.add(url.href);
         const {html,location} = await publicPage(url,signal);
-        if (html) return brandFromHtml(host,html,url.origin+url.pathname);
+        if (html) {
+          const brand = brandFromHtml(host,html,url.origin);
+          if (brand) return brand;
+          break;
+        }
         if (!location) break;
         url = new URL(location,url);
         if (url.username || url.password || url.protocol !== 'https:' || url.port ||
