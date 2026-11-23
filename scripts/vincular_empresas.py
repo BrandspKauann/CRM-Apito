@@ -111,8 +111,16 @@ def psql(sql):
 
 
 CURRENT = """
+WITH brands AS MATERIALIZED (
+ SELECT convert_from(pg_catalog.lo_get(m.oid),'UTF8')::jsonb->'entries' entries
+ FROM pg_catalog.pg_largeobject_metadata m JOIN pg_catalog.pg_description d
+ ON d.objoid=m.oid AND d.classoid='pg_catalog.pg_largeobject'::regclass AND d.objsubid=0
+ WHERE d.description='crm-apito/company-brand-register/v1'
+ AND pg_get_userbyid(m.lomowner) IN (current_user,'crm_web_vps')
+)
 SELECT 'c' k,id,email v,company::text l FROM public.contacts UNION ALL
-SELECT 'e',id,name,to_jsonb(c)->>'website' FROM public.companies c UNION ALL
+SELECT 'e',id,name,coalesce(nullif(to_jsonb(c)->>'website',''),'https://'||(brands.entries->c.id::text->>'domain'))
+FROM public.companies c LEFT JOIN brands ON true UNION ALL
 SELECT 'a',contact_id,json_agg(DISTINCT email ORDER BY email)::text,NULL FROM (
  SELECT s.contact_id,e.original_email email FROM crm_enrichment.crm_contact_sources s
  JOIN address_book.emails e ON e.contact_id::text=s.source_id WHERE s.source='iphone'

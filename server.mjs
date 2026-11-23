@@ -4,6 +4,7 @@ import {readFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {resolve} from 'node:path';
 import {query, transaction} from './db.mjs';
+import {loadBrandRegister} from './brand-register.mjs';
 import {commercialHistorySql, attachCommercialHistory} from './commercial-history.mjs';
 import {handleAuth, requireAuth} from './auth.mjs';
 import {handleIntegration} from './integrations.mjs';
@@ -68,8 +69,9 @@ export async function handler(req, res) {
       const data = {stages};
       const results = await Promise.all(Object.keys(fields).map(table => query(`SELECT * FROM ${table} ORDER BY id DESC`)));
       Object.keys(fields).forEach((table, index) => { data[table] = results[index].rows; });
-      // Companies created from an email domain retain that domain as their name.
+      const {entries: brands} = await loadBrandRegister(query);
       for (const company of data.companies) {
+        if (!company.website && brands[company.id]) company.website = 'https://' + brands[company.id].domain;
         if (!company.website && /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}$/i.test(company.name)) {
           company.website = 'https://' + company.name.toLowerCase();
         }
