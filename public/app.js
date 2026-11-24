@@ -729,6 +729,23 @@ function form(table, id, trail = [], initial = {}) {
         ? '<h3>' + esc(contact.name) + '</h3><dl>' + entries.map(([label, value]) =>
           '<div><dt>' + label + '</dt><dd>' + esc(value || 'Não informado') + '</dd></div>').join('') + '</dl>'
         : '<p>Vincule um contato ou selecione uma empresa.</p>';
+      if (contact) {
+        const budgets = (contact.commercial_history || []).filter(group => group.origin === 'MeEventos');
+        const heading = document.createElement('h4');
+        heading.textContent = 'Orçamentos do contato · MeEventos';
+        details.append(heading);
+        const labels = {approved:'Aprovado', open:'Em aberto', lost:'Perdido ou recusado', closed_unknown:'Finalizado sem desfecho', cancelled:'Cancelado'};
+        for (const group of budgets) {
+          const line = document.createElement('p');
+          line.textContent = (labels[group.outcome] || group.outcome) + ' · ' + group.refs.map(id => '#' + id).join(', ');
+          details.append(line);
+        }
+        if (!budgets.length) {
+          const message = document.createElement('p');
+          message.textContent = data.historyUnavailable ? 'Histórico indisponível.' : 'Nenhum orçamento identificado no histórico deste contato.';
+          details.append(message);
+        }
+      }
     }
     contactSelect.onchange = showContact;
     showContact();
@@ -918,6 +935,40 @@ $('#content').addEventListener('click', async event => {
   }
   const record = event.target.closest('[data-id]');
   if (record) form(record.dataset.table, Number(record.dataset.id));
+});
+// Portfolio cards keep their original record when a linked opportunity is created.
+$('#content').addEventListener('contextmenu', event => {
+  const card = event.target.closest('.portfolio-card');
+  if (!card || !['contacts', 'companies'].includes(card.dataset.table)) return;
+  event.preventDefault();
+  document.getElementById('portfolio-opportunity-menu')?.remove();
+  const table = card.dataset.table;
+  const row = directory[table].get(Number(card.dataset.id));
+  if (!row) return;
+  const menu = document.createElement('div');
+  menu.id = 'portfolio-opportunity-menu';
+  menu.popover = 'auto';
+  menu.style.cssText = 'position:fixed;inset:auto;margin:0;padding:4px;border:1px solid #ccc;border-radius:8px';
+  const action = document.createElement('button');
+  action.type = 'button';
+  action.className = 'rel-action';
+  action.textContent = 'Enviar para oportunidades';
+  action.onclick = () => {
+    menu.hidePopover();
+    const links = table === 'contacts' ? {contact: row.id, company: row.company} : {company: row.id};
+    form('deals', undefined, [], {name: row.name, stage: data.stages[0], ...links});
+    $('#fields select[name="stage"]').focus();
+  };
+  menu.append(action);
+  document.body.append(menu);
+  menu.addEventListener('toggle', () => {
+    if (!menu.matches(':popover-open')) menu.remove();
+  });
+  menu.showPopover();
+  const bounds = card.getBoundingClientRect();
+  menu.style.left = Math.max(0, Math.min(event.clientX || bounds.left, innerWidth - menu.offsetWidth)) + 'px';
+  menu.style.top = Math.max(0, Math.min(event.clientY || bounds.bottom, innerHeight - menu.offsetHeight)) + 'px';
+  action.focus();
 });
 $('#content').addEventListener('submit', async event => {
   if (!event.target.matches('[data-integration]')) return;
