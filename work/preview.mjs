@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { extname, relative, resolve, isAbsolute } from 'node:path';
@@ -14,6 +15,126 @@ const rules = defaults.map(({name, event, message}, index) => ({
 }));
 const runs = [];
 const lists = [], segmentEvents = [];
+const staffingEvents = [];
+let staffingId = 1;
+
+const previewLinks = new Map();
+const linkForAssignment = new Map();
+
+function revokePreviewLink(assignment) {
+  const token = linkForAssignment.get(assignment.id);
+  previewLinks.delete(token);
+  linkForAssignment.delete(assignment.id);
+}
+
+function updatePreviewAssignment(role, assignment, status) {
+  if (status === 'confirmed' && assignment.status !== status) {
+    if (role.assignments.filter(entry => entry.status === status).length >= role.capacity) return 'As vagas desta função já foram preenchidas.';
+    const event = staffingEvents.find(event => event.roles.includes(role));
+    const overlaps = staffingEvents.some(other => other.starts_at < event.ends_at && event.starts_at < other.ends_at &&
+      other.roles.some(item => item.assignments.some(entry => entry.contact_id === assignment.contact_id && entry.status === status)));
+    if (overlaps) return 'O contato já confirmou participação neste horário.';
+  }
+  assignment.status = status;
+  return null;
+}
+
+async function previewInvite(req, res) {
+  if (req.method !== 'POST') return json(res,405,{error:'Método inválido.'});
+  if (!req.headers['content-type']?.startsWith('application/json') ||
+      (req.headers.origin && new URL(req.headers.origin).host !== req.headers.host))
+    return json(res,403,{error:'Origem ou formato inválido.'});
+  let raw = '';
+  for await (const chunk of req) {
+    raw += chunk;
+    if (raw.length > 4096) return json(res,413,{error:'Conteúdo muito longo.'});
+  }
+  const {token,action} = JSON.parse(raw);
+  if (!['view','confirm','decline'].includes(action)) return json(res,400,{error:'Ação inválida.'});
+  const target = previewLinks.get(token);
+  if (!target) return json(res,404,{error:'Convite indisponível.'});
+  const {event,role,assignment} = target;
+  if (Date.parse(event.starts_at) <= Date.now()) return json(res,410,{error:'Convite expirado.'});
+  if (action !== 'view') {
+    const status = action === 'confirm' ? 'confirmed' : 'declined';
+    if (assignment.status !== 'invited' && assignment.status !== status) return json(res,409,{error:'Resposta já registrada.'});
+    const error = updatePreviewAssignment(role,assignment,status);
+    if (error) return json(res,409,{error});
+  }
+  return json(res,200,{event_name:event.name,role_name:role.name,starts_at:event.starts_at,ends_at:event.ends_at,
+    location:event.location,status:assignment.status,group_url:assignment.status==='confirmed' ? event.group_url : null});
+}
+
+async function previewStaffing(req, res, path) {
+  const fail = (status, error) => json(res, status, {error});
+  if (req.method === 'GET' && path === '/api/staffing') {
+    const events = [...staffingEvents].sort((a,b) => a.starts_at.localeCompare(b.starts_at) || a.id-b.id);
+    return json(res, 200, {events});
+  }
+  const route = /^\/api\/staffing\/(?:events(?:\/(\d+)\/roles)?|roles\/(\d+)\/assignments|assignments\/(\d+)(\/link)?)$/u.exec(path);
+  if (!route) return fail(404, 'Recurso não encontrado.');
+  const [,eventId,roleId,assignmentId,link] = route;
+  if (req.method !== (assignmentId && !link ? 'PATCH' : 'POST')) return fail(405, 'Método inválido.');
+  if (req.headers.origin && new URL(req.headers.origin).host !== req.headers.host) return fail(403, 'Origem inválida.');
+  let raw = '';
+  for await (const chunk of req) {
+    raw += chunk;
+    if (raw.length > 32_768) return fail(413, 'Conteúdo muito longo.');
+  }
+  const body = link ? null : JSON.parse(raw);
+  const name = typeof body?.name === 'string' ? body.name.trim() : '';
+  if (!eventId && !roleId && !assignmentId) {
+    const start = Date.parse(body?.starts_at), end = Date.parse(body?.ends_at);
+    const zoned = value => typeof value === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:\d\d)$/iu.test(value);
+    if (!name || name.length > 160 || !zoned(body?.starts_at) || !zoned(body?.ends_at) || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) return fail(400, 'Confira o nome e o horário do evento.');
+    const location = (body.location || '').trim();
+    const group_url = (body.group_url || '').trim();
+    if (location.length > 250) return fail(400, 'Local excede 250 caracteres.');
+    if (group_url && !/^https:\/\/chat\.whatsapp\.com\/[a-zA-Z0-9_-]+\/?(?:\?[^\s#]*)?$/u.test(group_url)) return fail(400, 'Use um link de convite de grupo do WhatsApp.');
+    const id = staffingId++;
+    staffingEvents.push({id,name,starts_at:new Date(start).toISOString(),ends_at:new Date(end).toISOString(),location,group_url,roles:[]});
+    return json(res, 201, {id});
+  }
+  if (eventId) {
+    const event = staffingEvents.find(event => event.id === Number(eventId));
+    if (!event) return fail(404, 'Evento não encontrado.');
+    if (!name || name.length > 120 || !Number.isInteger(body.capacity) || body.capacity < 1 || body.capacity > 999) return fail(400, 'Confira a função e o número de vagas.');
+    if (event.roles.some(role => role.name.toLowerCase() === name.toLowerCase())) return fail(409, 'Função já cadastrada neste evento.');
+    const id = staffingId++;
+    event.roles.push({id,name,capacity:body.capacity,assignments:[]});
+    return json(res, 201, {id});
+  }
+  const roles = staffingEvents.flatMap(event => event.roles);
+  if (roleId) {
+    const role = roles.find(role => role.id === Number(roleId));
+    const person = tables.contacts.find(person => person.id === Number(body?.contact_id));
+    if (!role || !person) return fail(404, 'Função ou contato não encontrado.');
+    if (role.assignments.some(entry => entry.contact_id === person.id)) return fail(409, 'Este contato já está na função.');
+    const id = staffingId++;
+    role.assignments.push({id,contact_id:person.id,contact_name:person.name,status:'invited'});
+    return json(res, 201, {id});
+  }
+  const role = roles.find(role => role.assignments.some(entry => entry.id === Number(assignmentId)));
+  if (!role) return fail(404, 'Convite não encontrado.');
+  const assignment = role.assignments.find(entry => entry.id === Number(assignmentId));
+  if (link) {
+    const event = staffingEvents.find(item => item.roles.includes(role));
+    if (Date.parse(event.starts_at) <= Date.now()) return fail(410, 'Evento já iniciado.');
+    if (assignment.status !== 'invited') return fail(409, 'O parceiro já respondeu.');
+    revokePreviewLink(assignment);
+    const token = randomBytes(32).toString('hex');
+    previewLinks.set(token,{event,role,assignment});
+    linkForAssignment.set(assignment.id,token);
+    return json(res,201,{token});
+  }
+  const status = body?.status;
+  if (!['confirmed','declined','invited'].includes(status)) return fail(400, 'Resposta inválida.');
+  const changed = assignment.status !== status;
+  const error = updatePreviewAssignment(role,assignment,status);
+  if (error) return fail(409,error);
+  if (changed) revokePreviewLink(assignment);
+  return json(res, 200, {id:assignment.id,status});
+}
 function trigger(deal,event) {
   for (const rule of rules.filter(rule=>rule.enabled && rule.event===event)) {
     if (rule.action==='followup') {
@@ -110,7 +231,9 @@ export const server = http.createServer(async (req, res) => {
         const cookie = path === '/api/logout' ? 'apito_demo_logout=1' : 'apito_demo_logout=; Max-Age=0';
         return json(res, 200, { ok: true }, { 'Set-Cookie': cookie + '; HttpOnly; SameSite=Strict; Path=/' });
       }
+      if (path === '/api/staffing-invite') return await previewInvite(req,res);
       if (!authenticated) return json(res, 401, { error: 'Entre na prévia.' });
+      if (path === '/api/staffing' || path.startsWith('/api/staffing/')) return await previewStaffing(req,res,path);
       if(path==='/api/contact-segments') {
         if(req.method==='GET') return json(res,200,{lists,events:segmentEvents.filter(e=>tables.deals.includes(e.deal) && e.deal.contact)
           .map(({deal,...event})=>({...event,contact_id:deal.contact}))});

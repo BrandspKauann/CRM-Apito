@@ -5,6 +5,7 @@ const pages = {
   contacts: 'Contatos',
   segments: 'Segmentação de contatos',
   deals: 'Funil de negócios',
+  staffing: 'Escalas de eventos',
   automations: 'Automações',
   integrations: 'Integrações'
 };
@@ -35,6 +36,7 @@ const iconPaths = {
 };
 // Solid silhouettes and a second ink for the five navigation emblems.
 const navEmblems = {
+  staffing: '<path d="M2 5h20v17H2z"/><path class="ink-cut" d="M4 10h16v10H4z"/><path class="ink-accent" d="M6 2h3v5H6zm9 0h3v5h-3zM7 12h4v3H7zm6 0h4v3h-4z"/>',
   automations: '<path d="M14 1 3 14h8l-1 9L22 9h-9z"/>',
   home: '<path d="M2 21V3h20v18z"/><path class="ink-cut" d="M5 6h14v9H5z"/><path class="ink-accent" d="M6 13 9 8l3 3 5-4 2 6z"/><path class="ink-cut" d="M5 17h6v1H5z"/>',
   companies: '<path d="m2 7 12-5v19H2z"/><path class="ink-accent" d="m16 8 6 3v10h-6z"/><path class="ink-cut" d="M5 9h2v3H5zm5-2h2v3h-2zm-5 7h2v3H5zm5-2h2v3h-2zm-2 6h3v3H8zm10-5h2v3h-2z"/>',
@@ -537,17 +539,19 @@ function draw() {
     segments: 'Combine regras para criar listas de contatos e consultar quem atende aos critérios.',
     contacts: 'Consulte telefones, e-mails e empresas vinculadas.',
     deals: 'Acompanhe cada oportunidade até o fechamento.',
+    staffing: 'Organize as vagas, os convites e as confirmações de cada evento.',
     automations: 'Defina o que acontece quando um negócio é criado ou muda de etapa.',
     integrations: 'Configure as conexões com Kommo e MeEventos.'
   })[page];
   $('#create').innerHTML = icon('plus', 18) + '<span>' +
     (page === 'companies' ? 'Nova empresa' : page === 'contacts' ? 'Novo contato' : 'Nova oportunidade') +
     '</span>';
-  $('#create').hidden = ['integrations','automations','segments'].includes(page);
+  $('#create').hidden = ['integrations','automations','segments','staffing'].includes(page);
   $('#alert').textContent = '';
   $('#content').className = page === 'home' ? 'dashboard-view' :
     page === 'integrations' ? 'integrations-view' : 'records-view';
   document.title = pages[page] + ' | CRM Apito de Mestre';
+  if (page === 'staffing') { EventStaffing.mount($('#content'), data, directory, apiFetch); return; }
   if (page === 'segments') { ContactSegments.mount($('#content'), data, directory, apiFetch, form); return; }
   if (page === 'automations') { drawAutomations(); return; }
   if (page === 'integrations') { drawIntegrations(); return; }
@@ -784,12 +788,17 @@ async function refresh() {
   const response = await apiFetch('/api/crm');
   if (!response.ok) throw Error('Falha ao carregar o CRM.');
   const records = await response.json();
-  const historyResponse = await apiFetch('/api/commercial-history');
-  if (historyResponse.ok) {
-    const groups = new Map((await historyResponse.json()).map(person => [person.id, person]));
-    for (const person of records.contacts) Object.assign(person, groups.get(person.id));
+  records.historyUnavailable = true;
+  try {
+    const historyResponse = await apiFetch('/api/commercial-history');
+    if (historyResponse.ok) {
+      const groups = new Map((await historyResponse.json()).map(person => [person.id, person]));
+      for (const person of records.contacts) Object.assign(person, groups.get(person.id));
+      records.historyUnavailable = false;
+    }
+  } catch (error) {
+    if (!$('#login-screen').hidden) throw error;
   }
-  records.historyUnavailable = !historyResponse.ok;
   data = records;
   directory = buildDirectory(data);
   directory.portfolio = portfolioRanks(data);

@@ -117,6 +117,41 @@ const RecordRelationships = (() => {
     return section;
   }
 
+  const outcomeLabel = {
+    won: 'Negócio ganho', approved: 'Orçamento aprovado', lost: 'Oportunidade perdida',
+    open: 'Em aberto', closed_unknown: 'Finalizado sem desfecho', cancelled: 'Cancelado'
+  };
+
+  function contactEvidence(people) {
+    const rows = [];
+    for (const person of people) {
+      for (const {origin, outcome, refs} of person.commercial_history || []) {
+        for (const reference of refs || []) {
+          rows.push({id: person.id, name: person.name, origin, outcome, reference});
+        }
+      }
+    }
+    return rows;
+  }
+
+  function companyHistory(people, unavailable, navigate) {
+    const title = 'Histórico comercial dos contatos';
+    if (unavailable) {
+      const section = element('section', 'rel-group');
+      section.append(element('h3', 'rel-heading', title),
+        element('p', 'rel-empty', 'O histórico importado está indisponível. Recarregue a ficha após atualizar o CRM.'));
+      return section;
+    }
+    const rows = contactEvidence(people);
+    const history = relationshipGroup(title, rows, 'contacts',
+      row => [outcomeLabel[row.outcome] || row.outcome, row.origin + ' #' + row.reference].join(' · '),
+      'Nenhum registro comercial importado com vínculo a esses contatos.', navigate);
+    if (rows.some(row => row.outcome === 'approved' || row.outcome === 'won')) {
+      history.append(element('p', 'rel-empty', 'A realização do evento precisa de confirmação própria.'));
+    }
+    return history;
+  }
+
   function mount(table, record, data, trail, openRecord) {
     const fields = document.querySelector('#fields');
     const dialog = fields.closest('dialog');
@@ -164,11 +199,9 @@ const RecordRelationships = (() => {
           const history = element('section', 'rel-group');
           history.append(element('h3', 'rel-heading', 'Histórico comercial'));
           history.append(element('p', 'rel-copy', record.commercial_tags.join(' · ')));
-          const labels = {won:'Negócio ganho', approved:'Orçamento aprovado', lost:'Oportunidade perdida',
-            open:'Em aberto', closed_unknown:'Finalizado sem desfecho', cancelled:'Cancelado'};
           for (const group of record.commercial_history) {
             const details = element('details');
-            details.append(element('summary', null, group.origin + ' · ' + labels[group.outcome] + ' (' + group.refs.length + ')'));
+            details.append(element('summary', null, group.origin + ' · ' + (outcomeLabel[group.outcome] || group.outcome) + ' (' + group.refs.length + ')'));
             details.append(element('p', 'rel-copy', group.refs.map(id => '#' + id).join(', ')));
             history.append(details);
           }
@@ -200,6 +233,7 @@ const RecordRelationships = (() => {
         const people = data.contacts.filter(row => row.company === record.id);
         const names = new Map(people.map(row => [row.id, row.name]));
         const deals = data.deals.filter(row => row.company === record.id || names.has(row.contact));
+        groups.append(companyHistory(people, data.historyUnavailable, navigate));
         groups.append(relationshipGroup('Contatos da empresa', people, 'contacts',
           row => [row.email, row.phone].filter(Boolean).join(' · '), 'Nenhum contato vinculado.', navigate));
         groups.append(relationshipGroup('Oportunidades da empresa', deals, 'deals',

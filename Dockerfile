@@ -3,8 +3,10 @@ WORKDIR /app
 COPY package.json ./
 RUN npm install --omit=dev
 COPY --chown=node:node server.mjs integrations.mjs auth.mjs db.mjs contact-segments.mjs commercial-history.mjs brand-register.mjs follow-up.mjs kommo-sync.mjs kommo-extended.mjs kommo-file-window.mjs ./
+COPY --chown=node:node staffing.mjs ./
 COPY --chown=node:node public ./public
 COPY --chown=node:node automations.mjs automation-defaults.mjs ./
 COPY --chown=node:node migrations/automations.sql ./migrations/automations.sql
+COPY --chown=node:node migrations/004_event_staffing.sql ./migrations/004_event_staffing.sql
 USER node
 CMD ["node", "server.mjs"]

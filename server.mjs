@@ -8,6 +8,7 @@ import {query, transaction} from './db.mjs';
 import {loadBrandRegister} from './brand-register.mjs';
 import {commercialHistorySql, attachCommercialHistory} from './commercial-history.mjs';
 import {handleAuth, requireAuth} from './auth.mjs';
+import {handleStaffing, handleStaffingInvite} from './staffing.mjs';
 import {handleIntegration} from './integrations.mjs';
 import {followUpError, writableFields} from './follow-up.mjs';
 
@@ -24,6 +25,11 @@ const assets = {
   '/pipeline.css': ['pipeline.css', 'text/css'],
   '/relationships.css': ['relationships.css', 'text/css'],
   '/segments.js': ['segments.js','text/javascript'],
+  '/staffing.js': ['staffing.js','text/javascript'],
+  '/staffing.css': ['staffing.css','text/css'],
+  '/convite.html': ['convite.html','text/html'],
+  '/convite.js': ['convite.js','text/javascript'],
+  '/convite.css': ['convite.css','text/css'],
   '/directory.css': ['directory.css', 'text/css'],
   '/segments.css': ['segments.css', 'text/css'],
   '/relationships.js': ['relationships.js', 'text/javascript'],
@@ -53,7 +59,9 @@ export async function handler(req, res) {
       res.writeHead(200, {'Content-Type':mime + '; charset=utf-8', 'Cache-Control':'no-cache'}).end(content);
       return;
     }
+    if (await handleStaffingInvite(req, res, {query, transaction})) return;
     if (!requireAuth(req, res)) return;
+    if (await handleStaffing(req, res, {query, transaction})) return;
     if (await handleIntegration(req, res)) return;
     if (req.method === 'GET' && req.url === '/api/commercial-history') {
       const imported = await query("SELECT to_regclass('crm_enrichment.crm_contact_sources') IS NOT NULL AND to_regclass('crm_enrichment.meeventos_crosswalk') IS NOT NULL AND to_regclass('kommo_import.sync_state') IS NOT NULL AS available");
