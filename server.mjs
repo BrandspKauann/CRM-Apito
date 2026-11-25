@@ -156,6 +156,21 @@ export async function handler(req, res) {
       ? `UPDATE ${table} SET ${cols.map((key, index) => key + ' = ' + placeholders[index]).join(', ')} WHERE id = $${cols.length + 1} RETURNING id`
       : `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING id`;
     const params = id ? [...values, Number(id)] : values;
+    if (table === 'contacts') {
+      const company = body.company ? Number(body.company) : null;
+      const normalizeName = value => value.normalize('NFD').replace(/\p{M}/gu,'').trim().toLowerCase().replace(/\s+/g,' ');
+      const name = normalizeName(body.name);
+      const email = String(body.email || '').trim().toLowerCase();
+      const result = await transaction(async client => {
+        await client.query('SELECT pg_advisory_xact_lock(91372,$1::integer)',[company || 0]);
+        const candidates = await client.query('SELECT id,name,email FROM contacts WHERE company IS NOT DISTINCT FROM $1::integer AND ($2::integer IS NULL OR id<>$2)',[company,id || null]);
+        const duplicate = candidates.rows.find(row => normalizeName(row.name) === name || (email && row.email?.trim().toLowerCase() === email));
+        if (duplicate) return {duplicate:duplicate.id};
+        return client.query(sql,params);
+      });
+      if (result.duplicate) return json(res,409,{code:'duplicate_contact',id:result.duplicate,error:'Já existe um contato com esse nome ou e-mail nesse cadastro de empresa (#'+result.duplicate+').'});
+      return result.rowCount ? json(res,id ? 200 : 201,result.rows[0]) : json(res,404,{error:'Contato não encontrado.'});
+    }
     const result = table === 'deals' ? await writeDeal(sql,params,id,!id && body.fromSegment === true && body.contact ? {contact:Number(body.contact),stage:body.stage} : null) : await query(sql,params);
     if (!result.rowCount) { json(res, 404, {error:'Registro não encontrado'}); return; }
     json(res, id || result.skipped ? 200 : 201, {id:result.rows[0].id, ...(result.skipped && {skipped:true})});

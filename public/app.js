@@ -114,6 +114,90 @@ function directoryRows() {
     }
   });
 }
+function parseContactsCsv(input) {
+  const text = input.replace(/^\uFEFF/,'');
+  const header = text.split(/\r?\n/,1)[0];
+  const delimiter = header.includes(';') ? ';' : ',';
+  const rows = [];
+  let row = [], field = '', quoted = false, closed = false;
+  for (let i=0;i<text.length;i++) {
+    const char=text[i];
+    if (quoted) {
+      if (char!=='"') field+=char;
+      else if (text[i+1]==='"') { field+='"'; i++; }
+      else { quoted=false; closed=true; }
+    } else if (char===delimiter) { row.push(field.trim()); field=''; closed=false; }
+    else if (char==='\n' || char==='\r') {
+      if (char==='\r' && text[i+1]==='\n') i++;
+      row.push(field.trim()); if (row.some(Boolean)) rows.push(row);
+      row=[]; field=''; closed=false;
+    } else if (char==='"' && !field && !closed) quoted=true;
+    else if (char==='"' || (closed && char.trim())) throw Error('Aspas inválidas no CSV.');
+    else field+=char;
+  }
+  if (quoted) throw Error('Campo entre aspas incompleto no CSV.');
+  row.push(field.trim()); if (row.some(Boolean)) rows.push(row);
+  return rows;
+}
+
+function mountContactImport(toolbar) {
+  const box=document.createElement('details');
+  const summary=document.createElement('summary');
+  summary.textContent='Importar CSV';
+  const help=document.createElement('p');
+  help.textContent='Use Nome, Empresa, E-mail e Telefone. Nome é obrigatório. Informe o nome de uma empresa cadastrada ou use a coluna ID da empresa.';
+  const file=document.createElement('input');
+  file.type='file'; file.accept='.csv,text/csv'; file.setAttribute('aria-label','Arquivo CSV de contatos');
+  const status=document.createElement('p');
+  status.setAttribute('role','status');
+  box.append(summary,help,file,status);
+  toolbar.after(box);
+  const key=value=>String(value || '').normalize('NFD').replace(/\p{M}/gu,'').toLowerCase().trim().replace(/\s+/g,' ');
+  file.onchange=async () => {
+    const selected=file.files[0];
+    if (!selected) return;
+    let created=0, duplicates=0, rejected=0;
+    let issues=[];
+    file.disabled=true;
+    try {
+      const [header,...rows]=parseContactsCsv(await selected.text());
+      const cols=(header || []).map(key);
+      const idx=(...names)=>cols.findIndex(col=>names.includes(col));
+      const name=idx('nome','name','nome do contato'), company=idx('empresa','company'), companyId=idx('id da empresa','company_id'), email=idx('email','e-mail'), phone=idx('telefone','phone','celular');
+      if (name<0 || !rows.length) throw Error('Inclua o cabeçalho Nome e pelo menos um contato.');
+      if (!window.confirm('Importar '+rows.length+' registros do arquivo '+selected.name+'?')) return;
+      const byName=new Map();
+      for (const item of data.companies) {
+        const k=key(item.name);
+        byName.set(k,byName.has(k) ? null : item.id);
+      }
+      for (const [index,row] of rows.entries()) {
+        const ref=row[companyId], label=row[company];
+        const id=ref ? Number(ref) : label ? byName.get(key(label)) : null;
+        const invalidCompany=(ref || label) && (!id || !directory.companies.has(id) || (ref && label && key(directory.companies.get(id).name)!==key(label)));
+        if (row.length!==cols.length || !row[name] || invalidCompany) {
+          rejected++; if (issues.length<8) issues.push('Registro '+(index+1)+': '+(invalidCompany?'empresa ausente ou ambígua':'nome ou colunas inválidos')); continue;
+        }
+        const person={name:row[name],company:id,email:row[email] || '',phone:row[phone] || ''};
+        const res=await apiFetch('/api/contacts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(person)});
+        const result=await res.json();
+        if (res.status===409 && result.code==='duplicate_contact') duplicates++;
+        else if (res.ok) created++;
+        else throw Error('Registro '+(index+1)+': '+(result.error || 'Falha ao importar.'));
+        status.textContent='Processados '+(index+1)+' de '+rows.length;
+      }
+    } catch(error) { issues.push(error.message); }
+    finally {
+      const message=created+' criados, '+duplicates+' duplicados ignorados, '+rejected+' inválidos. '+issues.join(' · ');
+      file.value=''; file.disabled=false; status.textContent=message;
+      if (created) {
+        try { await refresh(); } catch { /* Imported contacts are already saved. */ }
+        if (page==='contacts') $('#alert').textContent=message;
+      }
+    }
+  };
+}
+
 function mountDirectoryFilter() {
   const searchBox = $('.search-box');
   $('#search').placeholder = page === 'contacts' ? 'Nome, empresa, e-mail ou telefone' : 'Nome, cidade ou domínio';
@@ -121,6 +205,7 @@ function mountDirectoryFilter() {
     pages[page].toLowerCase() + '</span><select id="directory-filter">' +
     directoryFilters[page].map(([value, label]) => '<option value="' + value + '">' + label + '</option>').join('') +
     '</select></label>');
+  if (page === 'contacts') mountContactImport(searchBox);
   const select = $('#directory-filter');
   select.value = directoryFilter;
   select.onchange = () => { directoryFilter = select.value; directoryPage = 1; renderRows(); };
