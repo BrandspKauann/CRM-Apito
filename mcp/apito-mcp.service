@@ -1,0 +1,22 @@
+[Unit]
+Description=CRM Apito MCP
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+WorkingDirectory=/opt/apito-mcp
+EnvironmentFile=/etc/apito-mcp.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/apito-mcp/.venv/bin/python /opt/apito-mcp/server.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
