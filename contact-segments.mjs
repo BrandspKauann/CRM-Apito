@@ -1,4 +1,4 @@
-import { segmentHistorySql } from './commercial-history.mjs';
+import { portfolioHistorySql, segmentHistorySql } from './commercial-history.mjs';
 import { query, transaction } from './db.mjs';
 
 const localEvents = `
@@ -26,19 +26,25 @@ async function loadLists(execute, hasTable) {
   return lists.sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));
 }
 
-export async function segmentData() {
+export async function segmentData(portfolio = false) {
   const {rows:[schema]} = await query("SELECT to_regclass('public.contact_segments') IS NOT NULL AS lists, to_regclass('public.deal_stage_history') IS NOT NULL AS history");
-  const lists = await loadLists(query,schema.lists);
+  const lists = portfolio ? [] : await loadLists(query,schema.lists);
   const historySource = schema.history ? localEvents : localEvents.replace(
     'LEFT JOIN deal_stage_history h ON h.deal_id=d.id',
     'CROSS JOIN (SELECT NULL::bigint AS id,NULL::boolean AS created,NULL::text AS stage,NULL::timestamptz AS occurred_at) h');
-  const local = await query(historySource);
+  const local = portfolio ? (schema.history ? await query(`
+    SELECT DISTINCT d.contact AS contact_id,d.company AS company_id,'CRM Apito' AS origin,d.id::text AS reference,
+      CASE h.stage WHEN 'Ganho' THEN 'won' WHEN 'Clientes' THEN 'won' WHEN 'Perdido' THEN 'lost'
+        WHEN 'Finalizado sem desfecho' THEN 'closed' WHEN 'Orçamento aprovado' THEN 'approved' ELSE 'stage' END AS kind,
+      to_char(h.occurred_at AT TIME ZONE 'America/Sao_Paulo','YYYY-MM-DD') AS day
+    FROM deals d JOIN deal_stage_history h ON h.deal_id=d.id
+    WHERE (h.occurred_at AT TIME ZONE 'America/Sao_Paulo')::date <= DATE '2026-11-30'`) : {rows:[]}) : await query(historySource);
   const imported = await transaction(async client => {
     const sources = await client.query("SELECT to_regclass('crm_enrichment.meeventos_crosswalk') IS NOT NULL AND to_regclass('kommo_import.records') IS NOT NULL AND to_regclass('crm_enrichment.crm_contact_sources') IS NOT NULL AS available");
     if (!sources.rows[0].available) return [];
     await client.query("SET LOCAL statement_timeout='25s'");
     await client.query('SET LOCAL jit=off');
-    return (await client.query(segmentHistorySql)).rows;
+    return (await client.query(portfolio ? portfolioHistorySql : segmentHistorySql)).rows;
   });
   return {lists,events:[...local.rows,...imported]};
 }

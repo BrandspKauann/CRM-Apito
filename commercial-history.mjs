@@ -95,3 +95,29 @@ export const segmentHistorySql = sourceSql + `, matched AS (
     AND (e.kind <> 'event' OR e.stamp IS NOT NULL)
 )
 SELECT DISTINCT contact_id,origin,reference,kind,day FROM events`;
+
+export const portfolioHistorySql = sourceSql + `, facts AS (
+ SELECT m.contact_id,'Kommo' AS origin,l.reference,e.kind,
+   to_char(to_timestamp(e.stamp::bigint) AT TIME ZONE 'America/Sao_Paulo','YYYY-MM-DD') AS day
+ FROM lead_people l JOIN source_map m ON m.source='kommo' AND m.source_id=l.original_contact
+ CROSS JOIN LATERAL (VALUES ('updated',l.payload->>'updated_at'),
+   (CASE l.status WHEN '142' THEN 'won' WHEN '143' THEN 'lost' END,l.payload->>'closed_at')) e(kind,stamp)
+ WHERE e.kind IS NOT NULL AND e.stamp ~ '^[1-9][0-9]{0,9}$'
+ UNION
+ SELECT m.contact_id,'Kommo',l.reference,
+   CASE r.payload#>>'{value_after,0,lead_status,id}' WHEN '142' THEN 'won' ELSE 'lost' END,
+   to_char(to_timestamp((r.payload->>'created_at')::bigint) AT TIME ZONE 'America/Sao_Paulo','YYYY-MM-DD')
+ FROM kommo_import.records r JOIN active_account a USING(account_id)
+ JOIN lead_people l ON l.reference=r.payload->>'entity_id'
+ JOIN source_map m ON m.source='kommo' AND m.source_id=l.original_contact
+ WHERE r.kind='events' AND r.payload->>'type'='lead_status_changed'
+ AND r.payload#>>'{value_after,0,lead_status,id}' IN ('142','143') AND r.payload->>'created_at' ~ '^[1-9][0-9]{0,9}$'
+ UNION
+ SELECT m.contact_id,'MeEventos',b.source_id::text,e.kind,left(e.stamp,10)
+ FROM crm_enrichment.meeventos_crosswalk b JOIN active_account a USING(account_id)
+ JOIN source_map m ON m.source='budgets' AND m.source_id=b.source_id::text
+ CROSS JOIN LATERAL (VALUES ('updated',b.attributes->>'dataAtualizacao'),('closed',b.attributes->>'dataFinalizacao'),
+ ('lost',b.attributes->>'dataPerda'),('lost',b.attributes->>'dataRecusa'),('approved',b.attributes->>'dataAprovacao')) e(kind,stamp)
+ WHERE b.source_type='budgets' AND b.match_result <> 'revisar_multiplos'
+ AND e.stamp ~ '^[1-9][0-9]{3}-[0-9]{2}-[0-9]{2}($|[ T])'
+) SELECT * FROM facts WHERE day <= '2026-11-30'`;

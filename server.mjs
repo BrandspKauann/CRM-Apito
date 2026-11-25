@@ -90,6 +90,7 @@ export async function handler(req, res) {
       json(res, 200, data);
       return;
     }
+    if (req.method === 'GET' && req.url === '/api/portfolio-history') return json(res,200,await segmentData(true));
     const segments = req.url === '/api/contact-segments';
     if (segments && req.method === 'GET') return json(res,200,await segmentData());
     const match = /^\/api\/(companies|contacts|deals)(?:\/(\d+))?$/.exec(req.url);

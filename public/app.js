@@ -306,17 +306,29 @@ function boardControls() {
       '</b></button>').join('') + '</div>';
 }
 
-async function loadPortfolioDates(records) {
-  if (records.portfolioDates) return;
+function loadPortfolioDates(records) {
+  return records.portfolioDatesRequest ??= collectPortfolioDates(records);
+}
+function commercialDay(value) {
+  const day = String(value || '').slice(0,10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || day > '2026-11-30') return '';
+  const date = new Date(day+'T00:00:00Z');
+  return Number.isFinite(+date) && date.toISOString().startsWith(day) ? day : '';
+}
+async function collectPortfolioDates(records) {
   const dates = records.portfolioDates = {contacts:new Map(), companies:new Map()};
   const latest = (map, id, day) => {
     if (id != null && day && day > (map.get(id) || '')) map.set(id,day);
   };
   try {
-    const response = await apiFetch('/api/contact-segments');
+    const response = await apiFetch('/api/portfolio-history');
     if (!response.ok) throw Error();
     const {events} = await response.json();
-    for (const event of events) latest(dates.contacts,event.contact_id,event.day);
+    dates.events = events.filter(event => commercialDay(event.day));
+    for (const event of dates.events) latest(dates.contacts,event.contact_id,event.day);
+    for (const event of dates.events) latest(dates.companies,event.company_id,event.day);
+    for (const person of records.contacts) latest(dates.contacts,person.id,commercialDay(person.updated_at));
+    for (const company of records.companies) latest(dates.companies,company.id,commercialDay(company.updated_at));
     for (const person of records.contacts) latest(dates.companies,person.company,dates.contacts.get(person.id));
     dates.ready = true;
   } catch { dates.failed = true; }
@@ -703,6 +715,45 @@ async function showPreview(provider, card) {
     feedback.textContent = error.message || 'Falha na consulta.';
   }
 }
+async function showRecordDates(table, record, records, group) {
+  const section = document.createElement('section');
+  section.className = 'rel-group';
+  const title = document.createElement('h3');
+  title.className = 'rel-heading';
+  title.textContent = 'Datas do histórico';
+  const list = document.createElement('ul');
+  list.className = 'rel-list';
+  const message = document.createElement('p');
+  message.className = 'rel-copy';
+  message.textContent = 'Carregando datas…';
+  section.append(title, list, message);
+  group.prepend(section);
+  await loadPortfolioDates(records);
+  if (!section.isConnected) return;
+  const company = table === 'companies';
+  const people = new Map((company ? records.contacts.filter(person => person.company === record.id) : [record])
+    .map(person => [person.id, person.name]));
+  const deals = records.deals.filter(deal => people.has(deal.contact) || (company && deal.company === record.id));
+  const dealIds = new Set(deals.map(deal => String(deal.id)));
+  const rows = [];
+  const updated = commercialDay(record.updated_at);
+  if (updated) rows.push({day:updated,text:'Última atualização do cadastro · CRM Apito'});
+  const labels = {won:'Negócio ganho', lost:'Perda', closed:'Conclusão', approved:'Aprovação do orçamento', updated:'Última atualização', stage:'Atualização de etapa'};
+  for (const event of records.portfolioDates.events || []) {
+    if (!people.has(event.contact_id) && !(event.origin === 'CRM Apito' && dealIds.has(String(event.reference)))) continue;
+    const label = labels[event.kind] || event.kind;
+    rows.push({day:event.day, text:[label, event.origin + ' #' + event.reference, company && people.get(event.contact_id)].filter(Boolean).join(' · ')});
+  }
+  rows.sort((a,b) => b.day.localeCompare(a.day) || a.text.localeCompare(b.text,'pt-BR'));
+  for (const row of rows) {
+    const item = document.createElement('li');
+    item.textContent = row.day.split('-').reverse().join('/') + ' — ' + row.text;
+    list.append(item);
+  }
+  message.textContent = records.portfolioDates.failed ? 'Não foi possível carregar as datas do histórico comercial.' : rows.length ? '' : 'Nenhuma data registrada.';
+  message.hidden = !message.textContent;
+}
+
 function form(table, id, trail = [], initial = {}) {
   const row = data[table].find(item => item.id === id) || initial;
   editing = { table, id };
@@ -799,6 +850,9 @@ function form(table, id, trail = [], initial = {}) {
   }
   $('#error').textContent = '';
   RecordRelationships.mount(table, row, data, trail, form);
+  if (id && (table === 'contacts' || table === 'companies')) {
+    void showRecordDates(table, row, data, $('#fields .rel-groups'));
+  }
   if (page === 'deals' && table === 'contacts' && id) {
     const editor = $('dialog form');
     const original = new URLSearchParams(new FormData(editor)).toString();
