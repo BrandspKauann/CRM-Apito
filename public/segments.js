@@ -97,6 +97,7 @@ const ContactSegments = (() => {
           <section class="seg-preview" aria-labelledby="seg-preview-title">
             <div class="seg-panel-head"><span class="seg-heading-icon">${icon('people')}</span><h2 id="seg-preview-title">Público da lista</h2></div>
             <div class="seg-summary"><strong class="seg-total">—</strong><span>contatos encontrados</span><div class="seg-meter" aria-hidden="true"><i></i></div><small class="seg-share"></small></div>
+            <label class="seg-library">Filtrar por dados de contato<select data-channel><option value="">Todos os contatos da lista</option><option value="email">Com e-mail</option><option value="phone">Com telefone</option><option value="both">Com e-mail e telefone</option></select></label>
             <div class="seg-results-head"><h3>Contatos correspondentes</h3><button class="seg-export seg-secondary" type="button" data-export>${icon('download')}Exportar CSV</button></div>
             <div class="seg-save" data-transfer hidden><label>Etapa de oportunidades<select data-stage></select></label><button type="button" class="seg-primary" data-send>Enviar lista para oportunidades</button><p role="status" data-progress></p></div><div class="seg-results"></div><div class="seg-pagination"></div>
           </section>
@@ -285,12 +286,15 @@ const ContactSegments = (() => {
         }
       }
 
+      const channel = find('[data-channel]');
+      channel.onchange = refresh;
       function refresh() {
         const c=readCriteria();
         offset=0;
         results=[];
         if (!c.error) {
           for (const person of data.contacts) {
+            if (channel.value && !match(person,[],{profile:channel.value})) continue;
             const evidence=match(person,byContact.get(person.id)||[],c);
             if (evidence) results.push({person,evidence});
           }
@@ -325,6 +329,7 @@ const ContactSegments = (() => {
       function addList(list) {saved.add(new Option(list.name,String(list.id)));}
       lists.forEach(addList);
       saved.onchange = () => {
+        channel.value = '';
         const list=lists.find(item=>String(item.id)===saved.value);
         find('.seg-draft').hidden=true;
         editors.clear();groups.replaceChildren();listName.value=list?.name || '';
