@@ -42,9 +42,14 @@ export async function rulesApi(req,res,body,stages,json) {
   await query('INSERT INTO automation_rules(name,event,subject,message,action) VALUES($1,$2,$3,$4,$5)',values);
   json(res,201,{});
 }
-export async function writeDeal(sql,params,id) {
+export async function writeDeal(sql,params,id,segmentContact) {
   await prepare();
   const {result,jobs} = await transaction(async client => {
+    if (segmentContact) {
+      await client.query('SELECT pg_advisory_xact_lock(51481,$1::integer)',[segmentContact.contact]);
+      const existing=await client.query('SELECT id FROM deals WHERE contact=$1 AND stage=$2 LIMIT 1',[segmentContact.contact,segmentContact.stage]);
+      if (existing.rowCount) return {result:{...existing,skipped:true},jobs:[]};
+    }
     const old = id && (await client.query('SELECT stage FROM deals WHERE id=$1 FOR UPDATE',[id])).rows[0];
     const result = await client.query(sql,params);
     if (!result.rowCount) return {result,jobs:[]};

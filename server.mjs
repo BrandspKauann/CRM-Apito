@@ -155,9 +155,9 @@ export async function handler(req, res) {
       ? `UPDATE ${table} SET ${cols.map((key, index) => key + ' = ' + placeholders[index]).join(', ')} WHERE id = $${cols.length + 1} RETURNING id`
       : `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING id`;
     const params = id ? [...values, Number(id)] : values;
-    const result = table === 'deals' ? await writeDeal(sql,params,id) : await query(sql,params);
+    const result = table === 'deals' ? await writeDeal(sql,params,id,!id && body.fromSegment === true && body.contact ? {contact:Number(body.contact),stage:body.stage} : null) : await query(sql,params);
     if (!result.rowCount) { json(res, 404, {error:'Registro não encontrado'}); return; }
-    json(res, id ? 200 : 201, {id:result.rows[0].id});
+    json(res, id || result.skipped ? 200 : 201, {id:result.rows[0].id, ...(result.skipped && {skipped:true})});
   } catch (error) {
     console.error('Falha ao atender requisição do CRM:', error?.code || error?.name);
     json(res, isDatabaseInputError(error) ? 400 : 503, {

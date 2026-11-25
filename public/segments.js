@@ -98,7 +98,7 @@ const ContactSegments = (() => {
             <div class="seg-panel-head"><span class="seg-heading-icon">${icon('people')}</span><h2 id="seg-preview-title">Público da lista</h2></div>
             <div class="seg-summary"><strong class="seg-total">—</strong><span>contatos encontrados</span><div class="seg-meter" aria-hidden="true"><i></i></div><small class="seg-share"></small></div>
             <div class="seg-results-head"><h3>Contatos correspondentes</h3><button class="seg-export seg-secondary" type="button" data-export>${icon('download')}Exportar CSV</button></div>
-            <div class="seg-results"></div><div class="seg-pagination"></div>
+            <div class="seg-save" data-transfer hidden><label>Etapa de oportunidades<select data-stage></select></label><button type="button" class="seg-primary" data-send>Enviar lista para oportunidades</button><p role="status" data-progress></p></div><div class="seg-results"></div><div class="seg-pagination"></div>
           </section>
         </div>`;
       const find = selector => body.querySelector(selector);
@@ -109,6 +109,44 @@ const ContactSegments = (() => {
       const pageSize = 25;
       let mode = 'any', results = [], offset = 0, saving = false, savedRules = '';
 
+      const transfer=find('[data-transfer]'), stage=find('[data-stage]'), send=find('[data-send]'), progress=find('[data-progress]');
+      stage.add(new Option('Selecione a etapa',''));
+      for (const value of data.stages) stage.add(new Option(stageLabel(value),value));
+      let sending=false;
+      function updateTransfer() {
+        transfer.hidden=!saved.value;
+        send.disabled=sending || !stage.value || !results.length;
+      }
+      stage.onchange=updateTransfer;
+      send.onclick=async () => {
+        if (sending || !saved.value || !stage.value || !results.length) return;
+        const destination=stage.value, people=results.map(row=>row.person);
+        if (!window.confirm('Enviar '+fmt(people.length)+' contatos para '+stageLabel(destination)+'? Cada oportunidade incluirá a empresa vinculada. Contatos que já têm oportunidade nessa etapa serão ignorados.')) return;
+        sending=true;
+        const controls=[...body.querySelectorAll('button,input,select')].filter(node=>!node.disabled);
+        controls.forEach(node=>node.disabled=true);
+        let created=0, skipped=0;
+        try {
+          const response=await apiFetch('/api/crm');
+          if (!response.ok) throw Error('Falha ao consultar as oportunidades.');
+          const existing=(await response.json()).deals;
+          const present=new Set(existing.filter(deal=>deal.stage===destination).map(deal=>deal.contact));
+          for (const person of people) {
+            if (present.has(person.id)) {skipped++;continue;}
+            const deal={name:person.name, contact:person.id, company:person.company || null, amount:0, stage:destination, notes:''};
+            const res=await apiFetch('/api/deals',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...deal,fromSegment:true})});
+            if (!res.ok) throw Error('O CRM interrompeu o envio.');
+            const {id,skipped:alreadyPresent}=await res.json();
+            if (alreadyPresent) {skipped++;continue;}
+            data.deals.unshift({...deal,id});
+            present.add(person.id);
+            created++;
+            progress.textContent=fmt(created)+' oportunidades criadas.';
+          }
+          progress.textContent=fmt(created)+' oportunidades criadas e '+fmt(skipped)+' contatos já presentes na etapa.';
+        } catch {progress.textContent='Envio interrompido. '+fmt(created)+' criações confirmadas. Você pode retomar o envio.';}
+        finally {sending=false;controls.forEach(node=>node.disabled=false);updateTransfer();}
+      };
       function updateGroups() {
         find('.seg-counter').textContent = editors.size+(editors.size===1?' grupo':' grupos');
         find('[data-add]').disabled = editors.size >= 30;
@@ -219,6 +257,7 @@ const ContactSegments = (() => {
         const share = total ? 100*n/total : 0;
         find('.seg-share').textContent = error ? 'Aguardando regras completas' : share.toLocaleString('pt-BR',{maximumFractionDigits:1})+'% da base de '+fmt(total)+' contatos';
         find('.seg-meter i').style.width = (error?0:share)+'%';
+        updateTransfer();
         download.disabled = !!error || n===0;
         save.disabled = saving || !!error;
         preview.replaceChildren();
@@ -311,6 +350,7 @@ const ContactSegments = (() => {
             savedRules=JSON.stringify(c);
             find('.seg-draft').hidden=true;
           }
+          updateTransfer();
           feedback('Lista salva: '+list.name+'.');
         } catch(error) {feedback(error.message);}
         finally {saving=false;save.disabled=Boolean(readCriteria().error);}

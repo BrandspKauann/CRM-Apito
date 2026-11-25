@@ -306,7 +306,25 @@ function boardControls() {
       '</b></button>').join('') + '</div>';
 }
 
+async function loadPortfolioDates(records) {
+  if (records.portfolioDates) return;
+  const dates = records.portfolioDates = {contacts:new Map(), companies:new Map()};
+  const latest = (map, id, day) => {
+    if (id != null && day && day > (map.get(id) || '')) map.set(id,day);
+  };
+  try {
+    const response = await apiFetch('/api/contact-segments');
+    if (!response.ok) throw Error();
+    const {events} = await response.json();
+    for (const event of events) latest(dates.contacts,event.contact_id,event.day);
+    for (const person of records.contacts) latest(dates.companies,person.company,dates.contacts.get(person.id));
+    dates.ready = true;
+  } catch { dates.failed = true; }
+  if (records === data && page === 'deals' && boardView !== 'deals') renderRows();
+}
 function renderPortfolio(board) {
+  void loadPortfolioDates(data);
+  const dates = data.portfolioDates[boardView];
   const person = boardView === 'contacts';
   const matches = directoryMatch(search);
   const groups = portfolioColumns.map(() => []);
@@ -314,6 +332,7 @@ function renderPortfolio(board) {
     if (matches(row)) groups[directory.portfolio[boardView].get(row.id) ?? 0].push(row);
   }
   board.innerHTML = groups.map((rows, index) => {
+    rows.sort((a,b) => (dates.get(b.id) || '').localeCompare(dates.get(a.id) || '') || b.id-a.id);
     const title = portfolioColumns[index];
     const last = Math.max(0, Math.ceil(rows.length / boardPageSize) - 1);
     const current = Math.min(boardPages.get(index) || 0, last);
@@ -322,6 +341,9 @@ function renderPortfolio(board) {
       const count = directory.contactCounts.get(row.id) || 0;
       const detail = person ? [linked('companies', row.company), row.email || row.phone] :
         [count + (count === 1 ? ' contato vinculado' : ' contatos vinculados'), row.city];
+      const day = dates.get(row.id);
+      detail.push(day ? 'Data comercial: ' + day.split('-').reverse().join('/') :
+        data.portfolioDates.ready ? 'Sem data comercial' : data.portfolioDates.failed ? 'Data indisponível' : 'Carregando data…');
       return '<button type="button" class="record portfolio-card" data-table="' + boardView + '" data-id="' +
         row.id + '"><strong>' + esc(row.name) + '</strong><small>' +
         esc(detail.filter(Boolean).join(' · ')) + '</small></button>';
