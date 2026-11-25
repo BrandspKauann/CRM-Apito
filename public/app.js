@@ -715,6 +715,21 @@ async function showPreview(provider, card) {
     feedback.textContent = error.message || 'Falha na consulta.';
   }
 }
+function describeUpdate(changes) {
+  if (!changes?.length) return 'Atualização registrada; o histórico disponível informa apenas a data';
+  const types = {lead_status_changed:'Etapa alterada',sale_field_changed:'Valor do negócio alterado',
+    name_field_changed:'Nome alterado',responsible_user_changed:'Responsável alterado',
+    lead_added:'Negócio criado',lead_deleted:'Negócio excluído',lead_restored:'Negócio restaurado',
+    entity_tag_added:'Etiqueta adicionada',entity_tag_deleted:'Etiqueta removida',
+    common_note_added:'Nota adicionada',task_added:'Tarefa criada',task_completed:'Tarefa concluída'};
+  return [...new Set(changes.map(({action,before,after}) => {
+    const label = types[action] || (/^custom_field_/.test(action) ? 'Campo personalizado alterado ('+action+')' : 'Evento registrado no Kommo ('+(action || 'tipo indisponível')+')');
+    if (before && after && before !== after) return label+' de '+before+' para '+after;
+    if (after) return label+' para '+after;
+    return label;
+  }))].sort().join(' · ');
+}
+
 async function showRecordDates(table, record, records, group) {
   const section = document.createElement('section');
   section.className = 'rel-group';
@@ -741,7 +756,7 @@ async function showRecordDates(table, record, records, group) {
   const labels = {won:'Negócio ganho', lost:'Perda', closed:'Conclusão', approved:'Aprovação do orçamento', updated:'Última atualização', stage:'Atualização de etapa'};
   for (const event of records.portfolioDates.events || []) {
     if (!people.has(event.contact_id) && !(event.origin === 'CRM Apito' && dealIds.has(String(event.reference)))) continue;
-    const label = labels[event.kind] || event.kind;
+    const label = event.kind === 'updated' ? describeUpdate(event.changes) : labels[event.kind] || event.kind;
     rows.push({day:event.day, text:[label, event.origin + ' #' + event.reference, company && people.get(event.contact_id)].filter(Boolean).join(' · ')});
   }
   rows.sort((a,b) => b.day.localeCompare(a.day) || a.text.localeCompare(b.text,'pt-BR'));

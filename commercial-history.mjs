@@ -96,7 +96,24 @@ export const segmentHistorySql = sourceSql + `, matched AS (
 )
 SELECT DISTINCT contact_id,origin,reference,kind,day FROM events`;
 
-export const portfolioHistorySql = sourceSql + `, facts AS (
+export const portfolioHistorySql = sourceSql +  `, audit AS (
+ SELECT r.payload->>'entity_id' AS reference,r.payload->>'created_at' AS stamp,
+   r.payload->>'type' AS action,r.payload#>'{value_before,0}' AS before_value,
+   r.payload#>'{value_after,0}' AS after_value
+ FROM kommo_import.records r JOIN active_account a USING(account_id)
+ WHERE r.kind='events' AND r.payload->>'entity_type' IN ('lead','leads')
+), statuses AS (
+ SELECT r.source_id,r.payload->>'name' AS name FROM kommo_import.records r
+ JOIN active_account a USING(account_id) WHERE r.kind='statuses'
+), changes AS (
+ SELECT audit.reference,audit.stamp,jsonb_agg(DISTINCT jsonb_build_object('action',action,
+   'before',coalesce(old.name,before_value#>>'{lead_status,id}',before_value#>>'{sale,value}',before_value#>>'{name_field_value,name}'),
+   'after',coalesce(new_status.name,after_value#>>'{lead_status,id}',after_value#>>'{sale,value}',after_value#>>'{name_field_value,name}'))) AS changes
+ FROM audit JOIN leads l ON l.source_id=audit.reference AND l.payload->>'updated_at'=audit.stamp
+ LEFT JOIN statuses old ON old.source_id=before_value#>>'{lead_status,id}'
+ LEFT JOIN statuses new_status ON new_status.source_id=after_value#>>'{lead_status,id}'
+ GROUP BY audit.reference,audit.stamp
+), facts AS (
  SELECT m.contact_id,'Kommo' AS origin,l.reference,e.kind,
    to_char(to_timestamp(e.stamp::bigint) AT TIME ZONE 'America/Sao_Paulo','YYYY-MM-DD') AS day
  FROM lead_people l JOIN source_map m ON m.source='kommo' AND m.source_id=l.original_contact
@@ -120,4 +137,6 @@ export const portfolioHistorySql = sourceSql + `, facts AS (
  ('lost',b.attributes->>'dataPerda'),('lost',b.attributes->>'dataRecusa'),('approved',b.attributes->>'dataAprovacao')) e(kind,stamp)
  WHERE b.source_type='budgets' AND b.match_result <> 'revisar_multiplos'
  AND e.stamp ~ '^[1-9][0-9]{3}-[0-9]{2}-[0-9]{2}($|[ T])'
-) SELECT * FROM facts WHERE day <= '2026-11-30'`;
+) SELECT facts.*,changes.changes FROM facts LEFT JOIN changes
+ ON facts.origin='Kommo' AND facts.kind='updated' AND changes.reference=facts.reference
+ WHERE facts.day <= '2026-11-30'`;
