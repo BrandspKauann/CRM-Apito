@@ -1,5 +1,10 @@
 # Segmentação do Brain Apito
 
+> Em 26/11/2026, restaurei a interface anterior de segmentação por solicitação
+> de Kauann. Os detalhes abaixo documentam a implementação adicional, que deixou
+> de ser a tela padrão. Preservei os dados, listas e histórico no Brain; não
+> removi tabelas nem alterei a conexão do CRM.
+
 A área **Segmentação de contatos** do CRM usa a base `brain_apito`, com contatos,
 empresas e oportunidades separados. Há 14 dimensões, 16 listas compartilhadas,
 editor de condições E/OU/NÃO, prévia paginada, justificativas por integrante,
