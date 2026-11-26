@@ -38,7 +38,7 @@ export async function segmentData(portfolio = false) {
         WHEN 'Finalizado sem desfecho' THEN 'closed' WHEN 'Orçamento aprovado' THEN 'approved' ELSE 'stage' END AS kind,
       to_char(h.occurred_at AT TIME ZONE 'America/Sao_Paulo','YYYY-MM-DD') AS day
     FROM deals d JOIN deal_stage_history h ON h.deal_id=d.id
-    WHERE (h.occurred_at AT TIME ZONE 'America/Sao_Paulo')::date <= DATE '2026-11-30'`) : {rows:[]}) : await query(historySource);
+    WHERE (h.occurred_at AT TIME ZONE 'America/Sao_Paulo')::date <= (CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo')::date`) : {rows:[]}) : await query(historySource);
   const imported = await transaction(async client => {
     const sources = await client.query("SELECT to_regclass('crm_enrichment.meeventos_crosswalk') IS NOT NULL AND to_regclass('kommo_import.records') IS NOT NULL AND to_regclass('crm_enrichment.crm_contact_sources') IS NOT NULL AS available");
     if (!sources.rows[0].available) return [];

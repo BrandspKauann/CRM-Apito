@@ -391,16 +391,32 @@ function boardControls() {
       '</b></button>').join('') + '</div>';
 }
 
+const commercialDateFormatter = new Intl.DateTimeFormat('sv-SE', {
+  timeZone:'America/Sao_Paulo', year:'numeric', month:'2-digit', day:'2-digit'
+});
+function currentCommercialDay(now = new Date()) {
+  return commercialDateFormatter.format(now);
+}
 function loadPortfolioDates(records) {
-  return records.portfolioDatesRequest ??= collectPortfolioDates(records);
+  const cutoff = currentCommercialDay();
+  if (records.portfolioDatesCutoff !== cutoff) {
+    records.portfolioDatesCutoff = cutoff;
+    records.portfolioDatesRequest = collectPortfolioDates(records,cutoff);
+  }
+  return records.portfolioDatesRequest;
 }
-function commercialDay(value) {
-  const day = String(value || '').slice(0,10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || day > '2026-11-30') return '';
+function commercialDay(value, cutoff = currentCommercialDay()) {
+  const raw = String(value || '');
+  const day = raw.slice(0,10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return '';
   const date = new Date(day+'T00:00:00Z');
-  return Number.isFinite(+date) && date.toISOString().startsWith(day) ? day : '';
+  if (!Number.isFinite(+date) || !date.toISOString().startsWith(day)) return '';
+  // Imported history already uses local day strings; normalize explicitly zoned timestamps.
+  const instant = /[T ][\d:.]+(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw) ? new Date(raw) : null;
+  const localDay = instant && Number.isFinite(+instant) ? currentCommercialDay(instant) : day;
+  return localDay <= cutoff ? localDay : '';
 }
-async function collectPortfolioDates(records) {
+async function collectPortfolioDates(records,cutoff) {
   const dates = records.portfolioDates = {contacts:new Map(), companies:new Map()};
   const latest = (map, id, day) => {
     if (id != null && day && day > (map.get(id) || '')) map.set(id,day);
@@ -409,11 +425,11 @@ async function collectPortfolioDates(records) {
     const response = await apiFetch('/api/portfolio-history');
     if (!response.ok) throw Error();
     const {events} = await response.json();
-    dates.events = events.filter(event => commercialDay(event.day));
+    dates.events = events.filter(event => commercialDay(event.day,cutoff));
     for (const event of dates.events) latest(dates.contacts,event.contact_id,event.day);
     for (const event of dates.events) latest(dates.companies,event.company_id,event.day);
-    for (const person of records.contacts) latest(dates.contacts,person.id,commercialDay(person.updated_at));
-    for (const company of records.companies) latest(dates.companies,company.id,commercialDay(company.updated_at));
+    for (const person of records.contacts) latest(dates.contacts,person.id,commercialDay(person.updated_at,cutoff));
+    for (const company of records.companies) latest(dates.companies,company.id,commercialDay(company.updated_at,cutoff));
     for (const person of records.contacts) latest(dates.companies,person.company,dates.contacts.get(person.id));
     dates.ready = true;
   } catch { dates.failed = true; }
