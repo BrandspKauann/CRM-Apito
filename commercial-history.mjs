@@ -2,7 +2,7 @@
 const sourceSql = `
 WITH active_account AS (
   SELECT s.account_id FROM kommo_import.sync_state s
-  JOIN public.integration_configs i ON i.provider='kommo' AND rtrim(i.base_url,'/')=rtrim(s.cursor->>'origin','/')
+  JOIN crm.integration_configs i ON i.provider='kommo' AND rtrim(i.base_url,'/')=rtrim(s.cursor->>'origin','/')
   WHERE s.stream='@source'
 ), source_map AS MATERIALIZED (
   SELECT source,source_id::text AS source_id,min(contact_id) AS contact_id

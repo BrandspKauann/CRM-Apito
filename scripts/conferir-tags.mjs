@@ -5,7 +5,7 @@ import { commercialHistorySql, attachCommercialHistory } from '../commercial-his
 try {
   const {people, evidence} = await transaction(async client => {
     await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
-    return {people:(await client.query('SELECT id FROM public.contacts')).rows,
+    return {people:(await client.query('SELECT id FROM brain.contacts')).rows,
       evidence:(await client.query(commercialHistorySql)).rows};
   });
   attachCommercialHistory(people,evidence);

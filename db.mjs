@@ -2,6 +2,7 @@ import { Pool, types } from 'pg';
 import net from 'node:net';
 import { once } from 'node:events';
 import ssh2 from 'ssh2';
+import { postgresSessionOptions, postgresConnectionOptions } from './db-options.mjs';
 
 // DATE is a calendar day. Keep it independent of the server and browser time zones.
 types.setTypeParser(types.builtins.DATE, value => value);
@@ -10,9 +11,10 @@ let tunnel;
 let poolPromise;
 
 async function openPool() {
+  const config = process.env.CRM_VPS_CONNECTION ? JSON.parse(process.env.CRM_VPS_CONNECTION) : null;
+  const sessionOptions = postgresSessionOptions(config);
   let connection = { connectionString: process.env.DATABASE_URL };
   if (process.env.CRM_VPS_CONNECTION) {
-    const config = JSON.parse(process.env.CRM_VPS_CONNECTION);
     tunnel = net.createServer(socket => {
       const ssh = new ssh2.Client();
       socket.on('error', () => ssh.destroy());
@@ -43,7 +45,7 @@ async function openPool() {
     throw new Error('Conexão PostgreSQL não configurada');
   }
   const pool = new Pool({
-    ...connection,
+    ...postgresConnectionOptions(connection, sessionOptions),
     max: process.env.VERCEL ? 2 : 10,
     connectionTimeoutMillis: 10000,
     idleTimeoutMillis: 30000,

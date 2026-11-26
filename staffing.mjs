@@ -5,10 +5,10 @@ const listSql = `
   SELECT e.id, e.name, e.starts_at, e.ends_at, e.location, e.group_url,
          r.id AS role_id, r.name AS role_name, r.capacity,
          a.id AS assignment_id, a.contact_id, c.name AS contact_name, a.status
-  FROM public.staffing_events e
-  LEFT JOIN public.staffing_roles r ON r.event_id=e.id
-  LEFT JOIN public.staffing_assignments a ON a.role_id=r.id
-  LEFT JOIN public.contacts c ON c.id=a.contact_id
+  FROM crm.staffing_events e
+  LEFT JOIN crm.staffing_roles r ON r.event_id=e.id
+  LEFT JOIN crm.staffing_assignments a ON a.role_id=r.id
+  LEFT JOIN brain.contacts c ON c.id=a.contact_id
   ORDER BY e.starts_at DESC, e.id, r.id, a.id`;
 
 function groupRows(rows) {
@@ -83,40 +83,40 @@ async function createEvent(query, body) {
   const start=instant(body.starts_at), end=instant(body.ends_at);
   if (!(start < end)) throw new StaffingError(400,'Informe início e fim válidos, com o fim posterior ao início.');
   if (!validLink(link)) throw new StaffingError(400,'Informe um link de convite do WhatsApp.');
-  return (await query(`INSERT INTO public.staffing_events(name,starts_at,ends_at,location,group_url)
+  return (await query(`INSERT INTO crm.staffing_events(name,starts_at,ends_at,location,group_url)
     VALUES($1,$2,$3,$4,$5) RETURNING id`,[name,new Date(start),new Date(end),location,link])).rows[0];
 }
 async function createRole(query, id, body) {
   const name=textField(body.name,120,true);
   if (!validId(body.capacity) || body.capacity>999) throw new StaffingError(400,'Informe de 1 a 999 vagas.');
-  return (await query(`INSERT INTO public.staffing_roles(event_id,name,capacity) VALUES($1,$2,$3) RETURNING id`,
+  return (await query(`INSERT INTO crm.staffing_roles(event_id,name,capacity) VALUES($1,$2,$3) RETURNING id`,
     [id,name,body.capacity])).rows[0];
 }
 async function invite(query,id,body) {
   if (!validId(body.contact_id)) throw new StaffingError(400,'Selecione um contato.');
-  return (await query(`INSERT INTO public.staffing_assignments(role_id,contact_id) VALUES($1,$2) RETURNING id`,
+  return (await query(`INSERT INTO crm.staffing_assignments(role_id,contact_id) VALUES($1,$2) RETURNING id`,
     [id,body.contact_id])).rows[0];
 }
 async function lockAssignment(client,id) {
   // All assignment writers take locks in the same order. READ COMMITTED makes
   // the final query see replies and token rotations committed while waiting.
-  const {rows:[keys]}=await client.query('SELECT role_id,contact_id FROM public.staffing_assignments WHERE id=$1',[id]);
+  const {rows:[keys]}=await client.query('SELECT role_id,contact_id FROM crm.staffing_assignments WHERE id=$1',[id]);
   if (!keys) throw new StaffingError(404,'Convite não encontrado.');
   await client.query('SELECT pg_advisory_xact_lock(1735611759,$1::integer)',[keys.role_id]);
   await client.query('SELECT pg_advisory_xact_lock(1735611760,$1::integer)',[keys.contact_id]);
   const {rows:[slot]}=await client.query(`SELECT a.id,a.role_id,a.contact_id,a.status,a.invite_hash,
     r.name AS role_name,r.capacity,e.name AS event_name,e.starts_at,e.ends_at,e.location,e.group_url,
     e.starts_at>clock_timestamp() AS upcoming
-    FROM public.staffing_assignments a JOIN public.staffing_roles r ON r.id=a.role_id
-    JOIN public.staffing_events e ON e.id=r.event_id WHERE a.id=$1`,[id]);
+    FROM crm.staffing_assignments a JOIN crm.staffing_roles r ON r.id=a.role_id
+    JOIN crm.staffing_events e ON e.id=r.event_id WHERE a.id=$1`,[id]);
   if (!slot) throw new StaffingError(404,'Convite não encontrado.');
   return slot;
 }
 async function checkAvailability(client,slot) {
-  const count=await client.query("SELECT count(*)::int AS used FROM public.staffing_assignments WHERE role_id=$1 AND status='confirmed'",[slot.role_id]);
+  const count=await client.query("SELECT count(*)::int AS used FROM crm.staffing_assignments WHERE role_id=$1 AND status='confirmed'",[slot.role_id]);
   if (count.rows[0].used>=slot.capacity) throw new StaffingError(409,'Todas as vagas desta função estão preenchidas.');
-  const overlapping=await client.query(`SELECT 1 FROM public.staffing_assignments a
-    JOIN public.staffing_roles r ON r.id=a.role_id JOIN public.staffing_events e ON e.id=r.event_id
+  const overlapping=await client.query(`SELECT 1 FROM crm.staffing_assignments a
+    JOIN crm.staffing_roles r ON r.id=a.role_id JOIN crm.staffing_events e ON e.id=r.event_id
     WHERE a.contact_id=$1 AND a.status='confirmed' AND e.starts_at<$2 AND e.ends_at>$3 LIMIT 1`,
     [slot.contact_id,slot.ends_at,slot.starts_at]);
   if (overlapping.rowCount) throw new StaffingError(409,'Este contato já está confirmado nesse horário.');
@@ -126,7 +126,7 @@ async function updateStatus(client,slot,status,viaLink) {
   if (slot.status===status) return {id:slot.id,status};
   if (viaLink && slot.status!=='invited') throw new StaffingError(409,'A resposta deste convite já foi registrada.');
   if (status==='confirmed') await checkAvailability(client,slot);
-  const {rows:[changed]}=await client.query(`UPDATE public.staffing_assignments SET status=$2,
+  const {rows:[changed]}=await client.query(`UPDATE crm.staffing_assignments SET status=$2,
     responded_at=CASE WHEN $2='invited' THEN NULL ELSE now() END,
     invite_hash=CASE WHEN $3::boolean THEN invite_hash ELSE NULL END
     WHERE id=$1 AND (NOT $3 OR $4::timestamptz>clock_timestamp()) RETURNING id,status`,
@@ -145,7 +145,7 @@ async function issueLink(transaction,id) {
     if (!slot.upcoming) throw expired();
     if (slot.status!=='invited') throw new StaffingError(409,'Só é possível gerar um link para um convite pendente.');
     const token=randomBytes(32).toString('hex');
-    const updated=await client.query(`UPDATE public.staffing_assignments SET invite_hash=$2
+    const updated=await client.query(`UPDATE crm.staffing_assignments SET invite_hash=$2
       WHERE id=$1 AND $3::timestamptz>clock_timestamp()`,[id,digest(token),slot.starts_at]);
     if (!updated.rowCount) throw expired();
     return {token};
@@ -163,14 +163,14 @@ async function readInvite({query,transaction},{token,action}) {
     const {rows:[slot]}=await query(`SELECT e.name AS event_name,r.name AS role_name,
       e.starts_at,e.ends_at,e.location,a.status,e.starts_at>clock_timestamp() AS upcoming,
       CASE WHEN a.status='confirmed' THEN e.group_url END AS group_url
-      FROM public.staffing_assignments a JOIN public.staffing_roles r ON r.id=a.role_id
-      JOIN public.staffing_events e ON e.id=r.event_id WHERE a.invite_hash=$1`,[hash]);
+      FROM crm.staffing_assignments a JOIN crm.staffing_roles r ON r.id=a.role_id
+      JOIN crm.staffing_events e ON e.id=r.event_id WHERE a.invite_hash=$1`,[hash]);
     if (!slot) throw new StaffingError(404,'Convite não encontrado.');
     if (!slot.upcoming) throw expired();
     return inviteSummary(slot,slot.status);
   }
   return transaction(async client => {
-    const {rows:[match]}=await client.query('SELECT id FROM public.staffing_assignments WHERE invite_hash=$1',[hash]);
+    const {rows:[match]}=await client.query('SELECT id FROM crm.staffing_assignments WHERE invite_hash=$1',[hash]);
     if (!match) throw new StaffingError(404,'Convite não encontrado.');
     const slot=await lockAssignment(client,match.id);
     if (slot.invite_hash!==hash) throw new StaffingError(404,'Convite não encontrado.');

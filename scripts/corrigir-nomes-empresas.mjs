@@ -15,7 +15,7 @@ for (const option of options.filter(arg => arg !== '--apply')) {
 }
 
 try {
-  const {rows} = await query('SELECT id,name,to_jsonb(c)->>\'website\' AS website FROM public.companies c ORDER BY id');
+  const {rows} = await query('SELECT id,name,to_jsonb(c)->>\'website\' AS website FROM brain.companies c ORDER BY id');
   const companies = rows.filter(c => domainPattern.test(c.name) && c.name.length <= 253 &&
     (!c.website || c.website === 'https://' + c.name));
   const sources = await internalBrands(query);
@@ -38,7 +38,7 @@ try {
       await execute("SELECT pg_advisory_xact_lock(hashtext('crm-company-brand-register'))");
       const register = await loadBrandRegister(execute);
       const hasWebsite = (await execute("SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema='public' AND table_name='companies' AND column_name='website') v")).rows[0].v;
-      const changed = await execute(`UPDATE public.companies c SET name=p.name ${hasWebsite ? ",website='https://'||p.domain" : ''}
+      const changed = await execute(`UPDATE brain.companies c SET name=p.name ${hasWebsite ? ",website='https://'||p.domain" : ''}
         FROM jsonb_to_recordset($1::jsonb) p(id integer,domain text,name text)
         WHERE c.id=p.id AND c.name=p.domain AND coalesce(nullif(to_jsonb(c)->>'website',''),'https://'||p.domain)='https://'||p.domain
         RETURNING c.id`,[JSON.stringify(decisions)]);
@@ -63,7 +63,7 @@ try {
   if (apply && supplied.size) {
     const {entries} = await loadBrandRegister(query);
     const confirmed = Object.entries(entries).filter(([,entry])=>supplied.get(entry.domain)?.name === entry.name);
-    const {rows:verified} = await query('SELECT id,name FROM public.companies WHERE id=ANY($1::integer[])',[confirmed.map(([id])=>Number(id))]);
+    const {rows:verified} = await query('SELECT id,name FROM brain.companies WHERE id=ANY($1::integer[])',[confirmed.map(([id])=>Number(id))]);
     console.log('MARCAS_EXEMPLOS_CONFIRMADOS',verified.filter(c => c.name===entries[c.id].name).length,'/',supplied.size);
   }
 } finally {

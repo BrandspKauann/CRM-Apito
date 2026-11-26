@@ -37,7 +37,7 @@ $$;
 CREATE OR REPLACE VIEW kommo_import.contact_match_candidates AS
 WITH active_accounts AS (
   SELECT s.account_id FROM kommo_import.sync_state s
-  JOIN public.integration_configs config
+  JOIN crm.integration_configs config
     ON config.provider = 'kommo'
    AND rtrim(s.cursor->>'origin','/') = rtrim(config.base_url,'/')
   WHERE s.stream = '@source'
@@ -53,7 +53,7 @@ WITH active_accounts AS (
   ) v
   WHERE v.match_key IS NOT NULL
 ), crm_keys AS MATERIALIZED (
-  SELECT c.id, v.method, v.match_key FROM public.contacts c
+  SELECT c.id, v.method, v.match_key FROM brain.contacts c
   CROSS JOIN LATERAL (VALUES
     ('phone', kommo_import.match_phone(c.phone)), ('email', kommo_import.match_email(c.email))
   ) v(method, match_key) WHERE v.match_key IS NOT NULL
@@ -72,7 +72,7 @@ SELECT m.account_id, m.source_id AS kommo_contact_id, k.payload->>'name' AS komm
        m.crm_contact_id, c.name AS crm_name, c.address_book_id, m.matched_by,
        m.crm_candidates, m.kommo_candidates,
        m.crm_candidates > 1 OR m.kommo_candidates > 1 AS ambiguous
-FROM counts m JOIN public.contacts c ON c.id = m.crm_contact_id
+FROM counts m JOIN brain.contacts c ON c.id = m.crm_contact_id
 JOIN kommo_import.records k
   ON (k.account_id, k.kind, k.source_id) = (m.account_id, 'contacts', m.source_id);
 

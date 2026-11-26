@@ -26,7 +26,7 @@ const sources = [
 ];
 
 const active = `WITH active AS (
-  SELECT s.account_id FROM kommo_import.sync_state s JOIN public.integration_configs i
+  SELECT s.account_id FROM kommo_import.sync_state s JOIN crm.integration_configs i
     ON i.provider='kommo' AND rtrim(s.cursor->>'origin','/')=rtrim(i.base_url,'/')
   WHERE s.stream='@source'
 )`;
@@ -41,7 +41,7 @@ export async function internalBrands(query) {
     let rows;
     try {
       ({rows} = await query(`${active} SELECT domain, name, site FROM (${sql}) src
-        WHERE domain IN (SELECT lower(name) FROM public.companies)
+        WHERE domain IN (SELECT lower(name) FROM brain.companies)
           AND length(trim(name)) BETWEEN 2 AND 150 ORDER BY domain, name`));
     } catch (err) {
       if (!['42501','42P01','3F000'].includes(err.code)) throw err;

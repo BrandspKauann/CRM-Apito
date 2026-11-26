@@ -22,12 +22,12 @@ const storedLists = `SELECT 'lo-' || m.oid AS id,
 async function loadLists(execute, hasTable) {
   const objects = await execute(storedLists,[listMarker]);
   const lists = objects.rows.map(({id,data})=>({id,name:data.name,criteria:data.criteria}));
-  if (hasTable) lists.push(...(await execute('SELECT id,name,criteria FROM public.contact_segments')).rows);
+  if (hasTable) lists.push(...(await execute('SELECT id,name,criteria FROM crm.contact_segments')).rows);
   return lists.sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));
 }
 
 export async function segmentData(portfolio = false) {
-  const {rows:[schema]} = await query("SELECT to_regclass('public.contact_segments') IS NOT NULL AS lists, to_regclass('public.deal_stage_history') IS NOT NULL AS history");
+  const {rows:[schema]} = await query("SELECT to_regclass('crm.contact_segments') IS NOT NULL AS lists, to_regclass('crm.deal_stage_history') IS NOT NULL AS history");
   const lists = portfolio ? [] : await loadLists(query,schema.lists);
   const historySource = schema.history ? localEvents : localEvents.replace(
     'LEFT JOIN deal_stage_history h ON h.deal_id=d.id',
@@ -71,11 +71,11 @@ export async function saveSegment(body) {
     const execute = client.query.bind(client);
     await execute("SELECT pg_advisory_xact_lock(hashtext('crm-apito/contact-segments'))");
     const name=body.name.trim();
-    const {rows:[schema]}=await execute("SELECT to_regclass('public.contact_segments') IS NOT NULL AS available");
+    const {rows:[schema]}=await execute("SELECT to_regclass('crm.contact_segments') IS NOT NULL AS available");
     const lists=await loadLists(execute,schema.available);
     if (lists.some(list=>list.name===name)) throw Object.assign(Error('Lista já existente.'),{code:'23505'});
     if (schema.available) return (await execute(
-      'INSERT INTO public.contact_segments(name,criteria) VALUES($1,$2) RETURNING id,name,criteria',
+      'INSERT INTO crm.contact_segments(name,criteria) VALUES($1,$2) RETURNING id,name,criteria',
       [name,body.criteria])).rows[0];
     const {rows:[row]}=await execute("SELECT lo_from_bytea(0,$1::bytea) AS oid",
       [Buffer.from(JSON.stringify({name,criteria:body.criteria}))]);

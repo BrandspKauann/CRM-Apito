@@ -61,6 +61,11 @@ export async function handler(req, res) {
     }
     if (await handleStaffingInvite(req, res, {query, transaction})) return;
     if (!requireAuth(req, res)) return;
+    if (req.method === 'GET' && req.url === '/api/data-source') {
+      const {rows: [source]} = await query("SELECT current_database() AS database, current_user AS application_role, current_setting('search_path') AS namespaces");
+      json(res, 200, {name: source.database === 'brain_apito' ? 'Brain Apito' : 'Base configurada', ...source});
+      return;
+    }
     if (await handleStaffing(req, res, {query, transaction})) return;
     if (await handleIntegration(req, res)) return;
     if (req.method === 'GET' && req.url === '/api/commercial-history') {

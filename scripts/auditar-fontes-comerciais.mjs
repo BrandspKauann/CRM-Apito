@@ -12,7 +12,7 @@ const checks = {
   attributes: `select source_type,k,count(*)::int n from crm_enrichment.meeventos_crosswalk
     cross join lateral jsonb_object_keys(attributes) k group by 1,2 order by 1,2`,
   dbroles: `select current_database() db,current_user role,pg_get_userbyid(c.relowner)=current_user owns_contacts
-    from pg_class c where c.oid='public.contacts'::regclass`,
+    from pg_class c where c.oid='brain.contacts'::regclass`,
   configs: 'select provider,base_url from integration_configs',
   streams: `select kind,count(*)::int n,max(synced_at)::date latest from kommo_import.records
     where kind in ('contacts','leads','pipelines','events') group by kind`,
