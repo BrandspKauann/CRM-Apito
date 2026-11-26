@@ -139,4 +139,4 @@ export const portfolioHistorySql = sourceSql +  `, audit AS (
  AND e.stamp ~ '^[1-9][0-9]{3}-[0-9]{2}-[0-9]{2}($|[ T])'
 ) SELECT facts.*,changes.changes FROM facts LEFT JOIN changes
  ON facts.origin='Kommo' AND facts.kind='updated' AND changes.reference=facts.reference
- WHERE facts.day <= '2026-11-30'`;
+ WHERE facts.day <= to_char(CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo','YYYY-MM-DD')`;
