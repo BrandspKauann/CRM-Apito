@@ -83,3 +83,9 @@ export async function handleAuth(req, res) {
   send(res, 200, {ok: true}, {'Set-Cookie': issueCookie(req, body.username)});
   return true;
 }
+
+export function authenticatedUsername(req) {
+  if (!isAuthenticated(req)) return null;
+  const raw=(req.headers.cookie||'').split(';').map(p=>p.trim()).find(p=>p.startsWith(cookieName+'='));
+  return JSON.parse(Buffer.from(raw.slice(cookieName.length+1).split('.')[0],'base64url').toString('utf8')).user;
+}

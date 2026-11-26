@@ -1,3 +1,4 @@
+import {handleBrainSegments} from './brain-segments-api.mjs';
 import {segmentData, validSegment, saveSegment} from './contact-segments.mjs';
 import {rulesApi,writeDeal} from './automations.mjs';
 import http from 'node:http';
@@ -24,6 +25,8 @@ const assets = {
   '/dashboard.css': ['dashboard.css', 'text/css'],
   '/pipeline.css': ['pipeline.css', 'text/css'],
   '/relationships.css': ['relationships.css', 'text/css'],
+  '/brain-segments.js': ['brain-segments.js','text/javascript'],
+  '/brain-segments.css': ['brain-segments.css','text/css'],
   '/segments.js': ['segments.js','text/javascript'],
   '/staffing.js': ['staffing.js','text/javascript'],
   '/staffing.css': ['staffing.css','text/css'],
@@ -66,6 +69,7 @@ export async function handler(req, res) {
       json(res, 200, {name: source.database === 'brain_apito' ? 'Brain Apito' : 'Base configurada', ...source});
       return;
     }
+    if (await handleBrainSegments(req,res)) return;
     if (await handleStaffing(req, res, {query, transaction})) return;
     if (await handleIntegration(req, res)) return;
     if (req.method === 'GET' && req.url === '/api/commercial-history') {

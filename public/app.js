@@ -671,7 +671,7 @@ function draw() {
     page === 'integrations' ? 'integrations-view' : 'records-view';
   document.title = pages[page] + ' | CRM Apito de Mestre';
   if (page === 'staffing') { EventStaffing.mount($('#content'), data, directory, apiFetch); return; }
-  if (page === 'segments') { ContactSegments.mount($('#content'), data, directory, apiFetch, form); return; }
+  if (page === 'segments') { BrainSegments.mount($('#content'), data, directory, apiFetch, form); return; }
   if (page === 'automations') { drawAutomations(); return; }
   if (page === 'integrations') { drawIntegrations(); return; }
   if (page === 'home') { drawHome(); return; }
