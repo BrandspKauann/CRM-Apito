@@ -1,0 +1,55 @@
+{
+  "verified_at": "2026-11-26T02:21:45.338050+00:00",
+  "databases": [
+    {
+      "datname": "anselmo",
+      "datallowconn": false
+    },
+    {
+      "datname": "brain_apito",
+      "datallowconn": true
+    },
+    {
+      "datname": "brain_validation_20261126021735",
+      "datallowconn": false
+    }
+  ],
+  "table_count": 21,
+  "counts": {
+    "address_book.contacts": 7968,
+    "address_book.enrichment_facts": 0,
+    "address_book.fields": 51328,
+    "address_book.identity_links": 0,
+    "address_book.imports": 1,
+    "brain.companies": 3221,
+    "brain.contacts": 22211,
+    "crm.automation_rules": 5,
+    "crm.automation_runs": 2,
+    "crm.deals": 1,
+    "crm.integration_configs": 1,
+    "crm.staffing_assignments": 0,
+    "crm.staffing_events": 2,
+    "crm.staffing_roles": 2,
+    "crm_enrichment.crm_contact_sources": 23266,
+    "crm_enrichment.iphone_crosswalk": 832,
+    "crm_enrichment.meeventos_crosswalk": 5614,
+    "kommo_import.edges": 544338,
+    "kommo_import.local_files": 2383,
+    "kommo_import.records": 456451,
+    "kommo_import.sync_state": 28459
+  },
+  "all_table_content_hashes_match": true,
+  "constraints_match": true,
+  "sequence_values_and_is_called_match": true,
+  "large_objects": 2,
+  "large_object_bytes_match": true,
+  "media_references": {
+    "files": 2383,
+    "bytes": 7728582335
+  },
+  "consumer_isolation_tested": true,
+  "source_backup": "/var/lib/brain-apito/backups/cutover-20261126021735",
+  "organized_dump": "/var/lib/brain-apito/backups/cutover-20261126021735/brain_apito.dump",
+  "public_catalog": "/etc/brain-apito/catalog.json",
+  "mcp_catalog": "/srv/vps-mcp/workspaces/brain-apito/catalog.json"
+}

@@ -6,7 +6,7 @@ CRM para empresas, contatos e negócios, com acesso autenticado e integrações 
 
 O **Brain Apito** é a base central de dados, independente da interface do CRM. A reorganização usa o banco PostgreSQL `brain_apito` na VPS, com cadastros compartilhados em `brain`, dados operacionais do CRM em `crm` e informações das fontes nos schemas `address_book`, `kommo_import` e `crm_enrichment`. O CRM é um consumidor dessa base; outros sistemas devem usar identidades e permissões próprias.
 
-**Estado da reorganização: pendente de corte e validação de produção.** O corte bloqueia conexões à origem `anselmo`, encerra as sessões existentes e cria uma cópia preservada para gerar o candidato final. As bases anteriores são mantidas, sem `DROP DATABASE`. O estado e as evidências de implantação ficam no [registro de migração do Brain Apito](docs/brain-apito.md). Não considere esta mudança online apenas pela publicação do código.
+**Estado da reorganização: concluída e conferida em produção em 25/11/2026.** O corte bloqueia conexões à origem `anselmo`, encerra as sessões existentes e cria uma cópia preservada para gerar o candidato final. As bases anteriores são mantidas, sem `DROP DATABASE`. O estado e as evidências de implantação ficam no [registro de migração do Brain Apito](docs/brain-apito.md). Não considere esta mudança online apenas pela publicação do código.
 
 As mídias ficam separadas do PostgreSQL, em `/srv/crm-apito-media`, e compõem o acervo do Brain. A reorganização não move essa pasta nem altera os IDs dos arquivos. O backup completo deve incluir banco e mídias. O tamanho do banco sozinho não representa o espaço de todos os dados.
 
